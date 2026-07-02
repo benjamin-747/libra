@@ -5,7 +5,7 @@ Merge one target into the current branch.
 ## Synopsis
 
 ```text
-libra merge [--ff-only | --no-ff | --squash | --no-commit] [-m <msg>] [--no-edit] [--stat | -n | --no-stat] [--verify-signatures | --no-verify-signatures] [--no-rerere-autoupdate] [--no-gpg-sign] [--dry-run] <branch>
+libra merge [--ff-only | --no-ff | --squash | --no-commit] [-m <msg>] [--no-edit] [--stat | -n | --no-stat] [--verify-signatures | --no-verify-signatures] [--no-rerere-autoupdate] [--no-gpg-sign] [--dry-run] [--autostash | --no-autostash] <branch>
 libra merge --continue
 libra merge --abort
 libra merge --restart
@@ -54,7 +54,8 @@ Libra still does not implement octopus merges, custom strategies, strategy optio
 | `--no-rerere-autoupdate` | Do not update the rerere index after the merge. No-op accepted for Git parity: Libra has no rerere. (Git's `--rerere-autoupdate` is not exposed.) |
 | `--no-gpg-sign` | Do not GPG-sign the merge commit. No-op accepted for Git parity: Libra's merge never signs. (Git's `-S`/`--gpg-sign` is not implemented.) |
 | `--continue` | Finish an in-progress merge after conflicts have been resolved and staged. |
-| `--abort` | Restore the pre-merge HEAD, index, and working tree. |
+| `--abort` | Restore the pre-merge HEAD, index, and working tree (re-applies a held autostash). |
+| `--autostash` / `--no-autostash` | Stash local tracked changes (incl. staged) before the merge and re-apply them when it concludes — held (outside `stash list`) across a conflict until `--continue`/`--abort`; a conflicting re-apply is saved to the stash list with a notice, never lost. Config: `merge.autostash` (boolean; invalid value = hard error). Untracked files are not stashed (Git parity). `--json` adds `autostash: applied\|stashed\|kept`. |
 | `--dry-run` | Libra extension: preview the merge outcome writing **nothing** — reports fast-forward / already-up-to-date / clean three-way / would-conflict (with the paths). Exits 0 for a clean preview, 1 when the merge would conflict. Mutually exclusive with `--continue`/`--abort`/`--restart`/`--squash`/`--no-commit`. |
 | `--restart` | Libra extension (ports Lore's `branch merge restart`): abort the in-progress conflicted merge — discarding any resolution work, exactly like `--abort` — then immediately re-run the same merge against the recorded target commit, regenerating fresh conflict markers and state. Takes no branch and no merge options (the original `-m`/`--no-ff`/… are not replayed). Requires a **conflicted** merge: a staged `--no-commit` merge is refused (finish it with `--continue` or discard with `--abort`). |
 | `--json` | Emit a structured success envelope. |

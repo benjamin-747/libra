@@ -1905,3 +1905,223 @@ fn test_merge_restart_refuses_staged_no_commit_merge() {
         "staged merge still finishable",
     );
 }
+
+// ── merge --autostash (lore.md §1.8) ────────────────────────────────────────
+
+/// Diverged repo WITHOUT conflicts: feature edits its own file.
+fn create_diverged_repo_clean() -> tempfile::TempDir {
+    let temp_repo = create_committed_repo_via_cli();
+    let p = temp_repo.path();
+    commit_file(p, "base.txt", "base\n", "base");
+    assert_cli_success(&run_libra_command(&["branch", "feature"], p), "branch");
+    assert_cli_success(
+        &run_libra_command(&["checkout", "feature"], p),
+        "co feature",
+    );
+    commit_file(p, "feature.txt", "feature\n", "feature edit");
+    assert_cli_success(&run_libra_command(&["checkout", "main"], p), "co main");
+    commit_file(p, "main.txt", "main\n", "main edit");
+    temp_repo
+}
+
+fn stash_list_len(p: &Path) -> usize {
+    let out = run_libra_command(&["stash", "list"], p);
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .count()
+}
+
+#[test]
+#[serial]
+fn test_merge_autostash_clean_merge_reapplies() {
+    let temp_repo = create_diverged_repo_clean();
+    let p = temp_repo.path();
+    // Clean tree: strict no-op (no stash, normal merge).
+    let out = run_libra_command(&["--json", "merge", "feature", "--autostash"], p);
+    assert_cli_success(&out, "clean-tree autostash merge");
+    let json = parse_json_stdout(&out);
+    assert!(
+        json["data"].get("autostash").is_none(),
+        "clean tree adds no autostash marker: {json}"
+    );
+    // Re-merge with a dirty tree in a fresh repo.
+    let temp_repo = create_diverged_repo_clean();
+    let p = temp_repo.path();
+    std::fs::write(p.join("base.txt"), "dirty edit\n").unwrap();
+    let out = run_libra_command(&["--json", "merge", "feature", "--autostash"], p);
+    assert_cli_success(&out, "dirty autostash merge");
+    let json = parse_json_stdout(&out);
+    assert_eq!(
+        json["data"]["autostash"].as_str(),
+        Some("applied"),
+        "{json}"
+    );
+    // The dirty edit is back, and the stash list is empty (never entered).
+    assert_eq!(
+        std::fs::read_to_string(p.join("base.txt")).unwrap(),
+        "dirty edit\n"
+    );
+    assert_eq!(stash_list_len(p), 0, "autostash never enters stash list");
+    // The merge result is present too.
+    assert!(p.join("feature.txt").exists());
+}
+
+#[test]
+#[serial]
+fn test_merge_autostash_conflict_holds_then_abort_restores() {
+    let temp_repo = create_diverged_repo_for_conflict();
+    let p = temp_repo.path();
+    std::fs::write(p.join("unrelated.txt"), "precious\n").unwrap();
+    assert_cli_success(&run_libra_command(&["add", "unrelated.txt"], p), "add");
+    let out = run_libra_command(&["merge", "feature", "--autostash"], p);
+    assert_eq!(out.status.code(), Some(128), "conflict exits 128");
+    // Held: dirty changes absent from the conflicted tree, stash list empty.
+    assert!(
+        !p.join("unrelated.txt").exists(),
+        "held autostash removes the dirty file from the conflict worktree"
+    );
+    assert_eq!(stash_list_len(p), 0, "held autostash not in stash list");
+    assert!(
+        p.join(".libra/merge-autostash.json").exists(),
+        "sidecar holds the stash"
+    );
+    // --abort restores the pre-merge tree AND re-applies the autostash.
+    let abort = run_libra_command(&["--json", "merge", "--abort"], p);
+    assert_cli_success(&abort, "abort");
+    let json = parse_json_stdout(&abort);
+    assert_eq!(
+        json["data"]["autostash"].as_str(),
+        Some("applied"),
+        "{json}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(p.join("unrelated.txt")).unwrap(),
+        "precious\n"
+    );
+    assert!(!p.join(".libra/merge-autostash.json").exists());
+}
+
+#[test]
+#[serial]
+fn test_merge_autostash_conflict_resolve_continue_reapplies() {
+    let temp_repo = create_diverged_repo_for_conflict();
+    let p = temp_repo.path();
+    std::fs::write(p.join("unrelated.txt"), "precious\n").unwrap();
+    assert_cli_success(&run_libra_command(&["add", "unrelated.txt"], p), "add");
+    let out = run_libra_command(&["merge", "feature", "--autostash"], p);
+    assert_eq!(out.status.code(), Some(128));
+    // Resolve and continue; the autostash comes back after the merge commit.
+    std::fs::write(p.join("shared.txt"), "top\nl1\nRESOLVED\nl3\nbottom\n").unwrap();
+    assert_cli_success(&run_libra_command(&["add", "shared.txt"], p), "add");
+    let cont = run_libra_command(&["--json", "merge", "--continue"], p);
+    assert_cli_success(&cont, "continue");
+    let json = parse_json_stdout(&cont);
+    assert_eq!(
+        json["data"]["autostash"].as_str(),
+        Some("applied"),
+        "{json}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(p.join("unrelated.txt")).unwrap(),
+        "precious\n"
+    );
+    assert_eq!(stash_list_len(p), 0);
+}
+
+#[test]
+#[serial]
+fn test_merge_autostash_restart_preserves_held_stash() {
+    let temp_repo = create_diverged_repo_for_conflict();
+    let p = temp_repo.path();
+    std::fs::write(p.join("unrelated.txt"), "precious\n").unwrap();
+    assert_cli_success(&run_libra_command(&["add", "unrelated.txt"], p), "add");
+    let out = run_libra_command(&["merge", "feature", "--autostash"], p);
+    assert_eq!(out.status.code(), Some(128));
+    // Restart re-conflicts; the held stash must survive (not demoted).
+    let restart = run_libra_command(&["merge", "--restart"], p);
+    assert_eq!(restart.status.code(), Some(128), "re-conflicts");
+    assert_eq!(stash_list_len(p), 0, "held stash NOT demoted by restart");
+    assert!(
+        p.join(".libra/merge-autostash.json").exists(),
+        "sidecar survives restart"
+    );
+    // Abort finally restores everything.
+    assert_cli_success(&run_libra_command(&["merge", "--abort"], p), "abort");
+    assert_eq!(
+        std::fs::read_to_string(p.join("unrelated.txt")).unwrap(),
+        "precious\n"
+    );
+}
+
+#[test]
+#[serial]
+fn test_merge_autostash_start_failure_restores_immediately() {
+    let temp_repo = create_diverged_repo_clean();
+    let p = temp_repo.path();
+    std::fs::write(p.join("base.txt"), "dirty edit\n").unwrap();
+    // --ff-only on diverged branches is refused AFTER the stash was taken:
+    // the dirty tree must be restored before the error propagates.
+    let out = run_libra_command(&["merge", "feature", "--ff-only", "--autostash"], p);
+    assert!(!out.status.success(), "ff-only diverged refused");
+    assert_eq!(
+        std::fs::read_to_string(p.join("base.txt")).unwrap(),
+        "dirty edit\n",
+        "start failure restores the dirty tree"
+    );
+    assert!(!p.join(".libra/merge-autostash.json").exists());
+    assert_eq!(stash_list_len(p), 0);
+}
+
+#[test]
+#[serial]
+fn test_merge_autostash_config_and_validation() {
+    let temp_repo = create_diverged_repo_clean();
+    let p = temp_repo.path();
+    // merge.autostash=true enables without the flag.
+    assert_cli_success(
+        &run_libra_command(&["config", "merge.autostash", "true"], p),
+        "set config",
+    );
+    std::fs::write(p.join("base.txt"), "dirty edit\n").unwrap();
+    let out = run_libra_command(&["--json", "merge", "feature"], p);
+    assert_cli_success(&out, "config-enabled autostash");
+    let json = parse_json_stdout(&out);
+    assert_eq!(
+        json["data"]["autostash"].as_str(),
+        Some("applied"),
+        "{json}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(p.join("base.txt")).unwrap(),
+        "dirty edit\n"
+    );
+    // Invalid config value is a HARD error (not silently off).
+    let temp_repo = create_diverged_repo_clean();
+    let p = temp_repo.path();
+    assert_cli_success(
+        &run_libra_command(&["config", "merge.autostash", "sometimes"], p),
+        "set bad config",
+    );
+    std::fs::write(p.join("base.txt"), "dirty edit\n").unwrap();
+    let out = run_libra_command(&["merge", "feature"], p);
+    assert!(!out.status.success(), "invalid merge.autostash is fatal");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("merge.autostash"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // --no-autostash overrides the (invalid) config: merge refuses the dirty
+    // tree via the normal guard instead (dirty worktree blocks a three-way).
+    let out = run_libra_command(&["merge", "feature", "--no-autostash"], p);
+    assert!(!out.status.success());
+    assert!(
+        std::fs::read_to_string(p.join("base.txt")).unwrap() == "dirty edit\n",
+        "no-autostash leaves the tree alone"
+    );
+    // clap exclusions.
+    let out = run_libra_command(&["merge", "--continue", "--autostash"], p);
+    assert_eq!(out.status.code(), Some(129));
+    let out = run_libra_command(&["merge", "feature", "--dry-run", "--autostash"], p);
+    assert_eq!(out.status.code(), Some(129));
+}

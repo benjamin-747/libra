@@ -134,6 +134,10 @@ pub struct PullMergeResult {
     pub aborted: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub continued: bool,
+    /// Autostash outcome from the merge-owned autostash (lore.md §1.8):
+    /// `applied` / `stashed` / `kept`. Absent when off or clean (additive).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub autostash: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -319,9 +323,11 @@ pub(crate) async fn run_pull(
         bytes_received: fetch_result.bytes_received,
     };
 
-    // `--autostash`: stash tracked changes before integrating so a dirty tree
-    // does not block the merge/rebase. The stash is re-applied afterwards.
-    let stashed = if args.autostash {
+    // `--autostash` on the REBASE path keeps the legacy push/pop wrap (rebase
+    // has no autostash machinery of its own — see COMPATIBILITY.md rebase
+    // row). The MERGE path uses the Git-faithful merge-owned autostash below
+    // (held on conflict rather than popped back into a conflicted tree).
+    let stashed = if args.autostash && args.rebase {
         stash::autostash_push()
             .await
             .map_err(PullError::Autostash)?
@@ -371,6 +377,12 @@ pub(crate) async fn run_pull(
                 verify_signatures: false,
                 // `pull` does not expose `--dry-run`.
                 dry_run: false,
+                // `pull --autostash` on the merge path rides the Git-faithful
+                // merge-owned autostash (held on conflict, applied by
+                // --continue/--abort); with no flag, `merge.autostash` config
+                // is resolved inside the merge — matching `git pull`.
+                autostash: if args.autostash { Some(true) } else { None },
+                preserve_held_autostash: false,
             },
         )
         .await
@@ -389,6 +401,7 @@ pub(crate) async fn run_pull(
                     conflicted_paths: merge_result.conflicted_paths,
                     aborted: merge_result.aborted,
                     continued: merge_result.continued,
+                    autostash: merge_result.autostash,
                 }),
                 rebase: None,
             }),
@@ -750,6 +763,12 @@ fn map_merge_error_to_cli(error: &merge::PullMergeError) -> CliError {
         merge::PullMergeError::ConflictStyleRead(..) => {
             CliError::fatal(error.to_string()).with_stable_code(StableErrorCode::IoReadFailed)
         }
+        merge::PullMergeError::Autostash(..) => CliError::failure(error.to_string())
+            .with_stable_code(StableErrorCode::ConflictOperationBlocked)
+            .with_detail("phase", "autostash"),
+        merge::PullMergeError::InvalidAutostashConfig(..) => CliError::failure(error.to_string())
+            .with_stable_code(StableErrorCode::RepoStateInvalid)
+            .with_hint("set merge.autostash to true/false (or remove it)"),
         merge::PullMergeError::StateLoad(..) | merge::PullMergeError::IndexLoad(..) => {
             CliError::fatal(error.to_string()).with_stable_code(StableErrorCode::IoReadFailed)
         }

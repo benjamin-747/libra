@@ -60,7 +60,7 @@ const ISSUE_URL: &str = "https://github.com/web3infra-foundation/libra/issues";
 // ── Typed error ──────────────────────────────────────────────────────
 
 #[derive(Debug, thiserror::Error)]
-enum StashError {
+pub(crate) enum StashError {
     #[error("not a libra repository")]
     NotInRepo,
 
@@ -490,6 +490,96 @@ async fn run_push(options: StashPushOptions) -> Result<StashOutput, StashError> 
         included_untracked: included_untracked_paths.len(),
         kept_index: options.keep_index,
     })
+}
+
+/// Create a HELD stash COMMIT for merge autostash (lore.md §1.8):
+/// tracked-only (index + worktree vs HEAD; untracked/ignored stay in place —
+/// Git parity), message-tagged, written to the object store but deliberately
+/// NOT entered into refs/stash (the MERGE_AUTOSTASH model). This does NOT
+/// touch the worktree: the caller must persist a durable reference (the
+/// sidecar) FIRST and only then call [`reset_to_head_for_held_stash`] — the
+/// reverse order would open a crash window where the changes are gone from
+/// the tree and the stash commit is referenced by nothing. Returns `None`
+/// when the tree is clean (strict no-op).
+pub(crate) async fn create_held_stash_commit(
+    message: &str,
+) -> Result<Option<ObjectHash>, StashError> {
+    let git_dir =
+        util::try_get_storage_path(None).map_err(|e| StashError::ReadObject(e.to_string()))?;
+    let index_path = git_dir.join("index");
+    let index = Index::load(&index_path).unwrap_or_else(|_| Index::new());
+
+    if !has_changes().await {
+        return Ok(None);
+    }
+
+    let head_commit_hash = Head::current_commit()
+        .await
+        .ok_or(StashError::NoInitialCommit)?;
+    let index_tree =
+        tree::create_tree_from_index(&index).map_err(|e| StashError::WriteObject(e.to_string()))?;
+    let (author, committer) = util::create_signatures().await;
+
+    let index_commit = Commit::new(
+        author.clone(),
+        committer.clone(),
+        index_tree.id,
+        vec![head_commit_hash],
+        message,
+    );
+    let data = index_commit
+        .to_data()
+        .map_err(|e| StashError::WriteObject(e.to_string()))?;
+    let index_commit_hash = object::write_git_object(&git_dir, "commit", &data)
+        .map_err(|e| StashError::WriteObject(e.to_string()))?;
+
+    let workdir = git_dir
+        .parent()
+        .ok_or_else(|| StashError::Other("cannot find workdir".into()))?;
+    let worktree_tree =
+        create_tree_from_workdir(workdir, &git_dir, &index).map_err(StashError::WriteObject)?;
+    let worktree_tree_data = worktree_tree
+        .to_data()
+        .map_err(|e| StashError::WriteObject(e.to_string()))?;
+    let worktree_tree_hash = object::write_git_object(&git_dir, "tree", &worktree_tree_data)
+        .map_err(|e| StashError::WriteObject(e.to_string()))?;
+
+    let stash_commit = Commit::new(
+        author,
+        committer,
+        worktree_tree_hash,
+        vec![head_commit_hash, index_commit_hash],
+        message,
+    );
+    let stash_commit_data = stash_commit
+        .to_data()
+        .map_err(|e| StashError::WriteObject(e.to_string()))?;
+    let stash_commit_hash = object::write_git_object(&git_dir, "commit", &stash_commit_data)
+        .map_err(|e| StashError::WriteObject(e.to_string()))?;
+
+    Ok(Some(stash_commit_hash))
+}
+
+/// Second half of the held-stash push: hard-reset index + worktree to HEAD.
+/// Call ONLY after the held stash commit is durably referenced (sidecar
+/// written) — see [`create_held_stash_commit`].
+pub(crate) async fn reset_to_head_for_held_stash() -> Result<(), StashError> {
+    let head_commit_hash = Head::current_commit()
+        .await
+        .ok_or(StashError::NoInitialCommit)?;
+    perform_hard_reset(&head_commit_hash)
+        .await
+        .map_err(StashError::ResetFailed)
+}
+
+/// Enter an existing stash COMMIT into refs/stash (promote a held autostash
+/// into the visible stash list, e.g. after its re-apply conflicted).
+pub(crate) async fn store_stash_commit(hash: &ObjectHash, message: &str) -> Result<(), StashError> {
+    let git_dir =
+        util::try_get_storage_path(None).map_err(|e| StashError::ReadObject(e.to_string()))?;
+    let (_, committer) = util::create_signatures().await;
+    update_stash_ref(&git_dir, hash, &committer, message)
+        .map_err(|e| StashError::WriteObject(e.to_string()))
 }
 
 /// Map an index entry's raw mode to the tree-item mode used for stash trees.
@@ -1200,6 +1290,27 @@ async fn do_apply(stash: Option<String>) -> Result<StashOutput, StashError> {
     let (index, hash_str) = resolve_stash_to_commit_hash(stash)?;
     let stash_commit_hash =
         ObjectHash::from_str(&hash_str).map_err(|e| StashError::ReadObject(e.to_string()))?;
+    apply_stash_commit(&stash_commit_hash).await?;
+
+    let branch = match Head::current().await {
+        Head::Branch(name) => name,
+        Head::Detached(_) => "(no branch)".to_string(),
+    };
+
+    Ok(StashOutput::Apply {
+        index,
+        stash_id: hash_str,
+        branch,
+    })
+}
+
+/// Apply a stash COMMIT by OID — the three-way apply shared by
+/// `stash apply/pop` and the merge autostash finalizer (which holds a stash
+/// commit reachable only from its sidecar, never from refs/stash). All-or-
+/// nothing: any conflict or collision fails BEFORE the worktree or index is
+/// touched, leaving the current state intact.
+pub(crate) async fn apply_stash_commit(hash: &ObjectHash) -> Result<(), StashError> {
+    let stash_commit_hash = *hash;
     let git_dir =
         util::try_get_storage_path(None).map_err(|e| StashError::ReadObject(e.to_string()))?;
 
@@ -1259,6 +1370,26 @@ async fn do_apply(stash: Option<String>) -> Result<StashOutput, StashError> {
         ensure_untracked_restore_paths_clear(untracked_tree, workdir, &git_dir)?;
     }
 
+    // A pure ADDITION in the merge result (absent from the current worktree
+    // tree) must not silently overwrite an untracked file the user created at
+    // the same path with different content — fail all-or-nothing instead
+    // (the caller keeps/promotes the stash; nothing is lost on either side).
+    for (path, merged_item) in &merged_files {
+        if worktree_files.contains_key(path) {
+            continue;
+        }
+        let full_path = workdir.join(path);
+        if full_path.exists() {
+            let existing = crate::command::calc_file_blob_hash(&full_path)
+                .map_err(|e| StashError::ReadObject(e.to_string()))?;
+            if existing != merged_item.id {
+                return Err(StashError::MergeConflict(format!(
+                    "untracked file '{path}' would be overwritten by the stashed addition"
+                )));
+            }
+        }
+    }
+
     // Remove any currently-tracked file the merge result drops (e.g. a deletion
     // recorded in the stash), based on the actual working tree rather than HEAD.
     for path in worktree_files.keys() {
@@ -1282,16 +1413,7 @@ async fn do_apply(stash: Option<String>) -> Result<StashOutput, StashError> {
         .save(&index_path)
         .map_err(|e| StashError::IndexSave(e.to_string()))?;
 
-    let branch = match Head::current().await {
-        Head::Branch(name) => name,
-        Head::Detached(_) => "(no branch)".to_string(),
-    };
-
-    Ok(StashOutput::Apply {
-        index,
-        stash_id: hash_str,
-        branch,
-    })
+    Ok(())
 }
 
 fn load_untracked_parent_tree(

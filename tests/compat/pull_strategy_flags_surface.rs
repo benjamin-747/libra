@@ -15,11 +15,15 @@
 //!   merged tree; `--no-commit` additionally records merge state so `merge
 //!   --continue` can finalize the two-parent commit). They MUST appear in
 //!   `pull --help`.
-//! - The remaining strategy flags (`--no-squash`, `--commit`, `--autostash`,
-//!   `--no-autostash`) are genuinely deferred: `--commit`/`--autostash` depend
-//!   on the autostash state machine that is not present in the current build,
-//!   so they MUST NOT appear. If a future change adds them, this guard flips red
-//!   and forces a `COMPATIBILITY.md` update in the same PR.
+//! - `--commit` and `--autostash` are implemented and MUST appear:
+//!   `--commit` is the last-one-wins override of `--no-commit`, and
+//!   `--autostash` rides the merge-owned autostash state machine on the merge
+//!   path (lore.md 1.8: held on conflict, applied by --continue/--abort) and
+//!   the legacy push/pop wrap on the rebase path.
+//! - `--no-squash` and `--no-autostash` remain genuinely deferred on `pull`
+//!   (merge exposes `--no-autostash`; pull's config-negation story is a
+//!   follow-up), so they MUST NOT appear. If a future change adds them, this
+//!   guard flips red and forces a `COMPATIBILITY.md` update in the same PR.
 //! - `--unshallow` is genuinely deferred (fetch has no unshallow path), so it
 //!   MUST NOT appear — if a future change adds it, this guard flips red and
 //!   forces a `COMPATIBILITY.md` update in the same PR.
@@ -91,7 +95,7 @@ fn pull_help_exposes_squash_and_no_commit() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    for flag in ["--squash", "--no-commit"] {
+    for flag in ["--squash", "--no-commit", "--commit", "--autostash"] {
         assert!(
             stdout.contains(flag),
             "pull --help must expose the implemented `{flag}` flag; stdout: {stdout}"
@@ -111,12 +115,7 @@ fn pull_help_omits_genuinely_deferred_flags() {
     // These depend on merge-engine machinery (force-commit override, the
     // autostash state machine, fetch unshallow) that the current build lacks,
     // so they are deferred (not faked) and must not appear.
-    for flag in [
-        "--no-squash",
-        "--autostash",
-        "--no-autostash",
-        "--unshallow",
-    ] {
+    for flag in ["--no-squash", "--no-autostash", "--unshallow"] {
         assert!(
             !stdout.contains(flag),
             "pull --help must NOT advertise the deferred `{flag}` flag; if it was \

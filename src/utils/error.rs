@@ -191,6 +191,10 @@ pub enum StableErrorCode {
     RepoStateInvalid,
     ConflictUnresolved,
     ConflictOperationBlocked,
+    /// Branch policy (protect/archive metadata) blocked a ref update — the
+    /// first enforcement code of the 1.13 policy layer (branch reset +
+    /// update-ref); future delete/push/merge enforcement reuses it.
+    PolicyRefUpdateBlocked,
     NetworkUnavailable,
     NetworkProtocol,
     AuthMissingCredentials,
@@ -237,6 +241,7 @@ impl StableErrorCode {
             Self::RepoStateInvalid => "LBR-REPO-003",
             Self::ConflictUnresolved => "LBR-CONFLICT-001",
             Self::ConflictOperationBlocked => "LBR-CONFLICT-002",
+            Self::PolicyRefUpdateBlocked => "LBR-POLICY-001",
             Self::NetworkUnavailable => "LBR-NET-001",
             Self::NetworkProtocol => "LBR-NET-002",
             Self::AuthMissingCredentials => "LBR-AUTH-001",
@@ -264,7 +269,11 @@ impl StableErrorCode {
             Self::RepoNotFound | Self::RepoCorrupt | Self::RepoStateInvalid => {
                 CliErrorCategory::Repo
             }
-            Self::ConflictUnresolved | Self::ConflictOperationBlocked => CliErrorCategory::Conflict,
+            Self::ConflictUnresolved
+            | Self::ConflictOperationBlocked
+            // Policy refusals ride the Conflict category (no dedicated
+            // Policy category yet; the JSON envelope reads "conflict").
+            | Self::PolicyRefUpdateBlocked => CliErrorCategory::Conflict,
             Self::NetworkUnavailable | Self::NetworkProtocol => CliErrorCategory::Network,
             Self::AuthMissingCredentials | Self::AuthPermissionDenied => CliErrorCategory::Auth,
             Self::IoReadFailed | Self::IoWriteFailed => CliErrorCategory::Io,
@@ -333,6 +342,9 @@ impl StableErrorCode {
             }
             Self::ConflictUnresolved => {
                 "Operation stopped because unresolved conflicts are present."
+            }
+            Self::PolicyRefUpdateBlocked => {
+                "Branch policy (protect/archive metadata) blocked the ref update."
             }
             Self::ConflictOperationBlocked => {
                 "Operation was blocked to avoid overwriting local or remote state."

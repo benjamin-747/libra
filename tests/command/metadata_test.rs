@@ -19,7 +19,7 @@ fn metadata_branch_roundtrip_set_get_list_unset() {
     );
     assert_cli_success(&set, "set");
     assert!(
-        String::from_utf8_lossy(&set.stderr).contains("not yet enforced"),
+        String::from_utf8_lossy(&set.stderr).contains("enforced for `branch reset`"),
         "protect emits the not-enforced notice"
     );
     // get

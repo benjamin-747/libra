@@ -278,6 +278,7 @@ mod automation_help_test;
 mod bisect_test;
 mod blame_test;
 mod branch_diff_test;
+mod branch_reset_test;
 mod branch_test;
 mod bundle_test;
 mod cache_test;

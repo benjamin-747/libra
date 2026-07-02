@@ -31,7 +31,7 @@ use crate::{
 
 pub const METADATA_EXAMPLES: &str = "\
 EXAMPLES:
-    libra metadata set protect true --branch main     Record branch protection (not yet enforced)
+    libra metadata set protect true --branch main     Protect the branch (enforced for branch reset/update-ref)
     libra metadata get protect --branch main          Read one branch metadata key
     libra metadata list --branch main                 List a branch's metadata
     libra metadata list --branch main --prefix lineage.  List only lineage.* keys
@@ -43,7 +43,8 @@ NOTES:
     Branch metadata lives in the metadata_kv table and follows the branch
     through rename/copy/delete. Repo metadata lives in config under the
     metadata.* namespace, so `libra config get metadata.owner` sees the same
-    value. protect/archive are recorded but not yet enforced.";
+    value. protect/archive are enforced for `branch reset`/`update-ref`
+    (delete/push/merge enforcement pending).";
 
 /// Branch/repo metadata key-value store (Libra extension).
 #[derive(Parser, Debug)]
@@ -410,7 +411,10 @@ pub async fn execute_safe(args: MetadataArgs, output: &OutputConfig) -> CliResul
             if matches!(scope, Scope::Branch(_)) && (key == KEY_PROTECT || key == KEY_ARCHIVE) {
                 // Recorded now, enforced by the future branch-policy layer
                 // (lore.md 1.13) — do not let users assume enforcement exists.
-                eprintln!("note: branch {key} is recorded but not yet enforced");
+                eprintln!(
+                    "note: {key} is enforced for `branch reset`/`update-ref`; delete/push/merge \
+                     enforcement pending"
+                );
             }
             let report = MetadataOutput::Set {
                 scope: scope.label(),

@@ -38,6 +38,10 @@ flowchart TD
 
 - 纯糖层：`execute_diff_safe` 解析默认值（subject=当前分支，base=`branch.<n>.remote/.merge` 上游）→ 未知侧转 `branch_not_found_error`（建议）→ 组装 argv（两点走 `--old/--new` 免歧义步行；`--merge-base` 三点粘连复用引擎 merge-base）→ `diff_plumbing::delegate_to_diff`（共享抽取；plumbing 保留其 128 解析覆盖，branch 走默认 129）。与 `diff A..B` 字节一致由测试钉住。保留字防护：clap `args_conflicts_with_subcommands` 在有 flags 时**不报错而是回落位置参数**（审阅 spike 实证），故 execute 处 `new_branch=="diff"` 一律拒绝（129 + 逃生口提示），绝不静默创建。
 
+### branch reset（lore.md 1.13）
+
+- 首个策略层消费者：`with_operation_log` 单事务内 fail-closed 重查 `is_protected_with_conn`/`is_archived_with_conn`（1.5 合同；垃圾值即受保护；元数据读错误即拒绝回滚）+ 重查 `Head::current_with_conn`（并发 switch 竞态，审阅 must-fix）→ `update_branch_with_conn` + `Reflog::insert_single_entry`（update-ref 先例——不经 `insert` 以免伪造 HEAD 条目；未调 ensure_reflog_table_exists：bootstrap SQL 建表，遗留缺表则整体事务 fail-closed——刻意决定）。哨兵字符串（LIBRA_POLICY_*）穿透 DbErr::Custom 在事务外还原类型化错误，保住 LBR-POLICY-001。无 `--force`（风险矩阵 lore.md:301：阻断+明确错误；旁路走显式 metadata unset，可审计）。**update-ref 同步纳管**（否则策略旁路）；其保持 plumbing 语义（可动 checked-out 分支，git 对齐，已在 COMPATIBILITY 注明）。main 允许 reset（默认分支锁保护删除/改名身份而非尖端移动；`libra reset` 本就可动 checked-out main）——可翻转的刻意决定。同参 5s 去重窗（operation-log 全局语义）拒绝重复 reset，测试钉住。未竟：拒绝事件接入 §7.8 审计 sink（现为 tracing::warn）；`--expect` CAS 延后（`update-ref <ref> <new> <old>` 已覆盖脚本化 CAS）。
+
 ## 实现历史
 
 - 本节依据本地 main 分支提交历史重写，筛选与该命令实现、测试或文档路径直接相关的提交；以下是归纳后的实现脉络。

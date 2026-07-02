@@ -110,6 +110,14 @@ pub enum BranchOutput {
         #[serde(skip_serializing)]
         sorted: bool,
     },
+    /// `branch reset <name> <target>` succeeded (lore.md 1.13).
+    #[serde(rename = "reset")]
+    Reset {
+        name: String,
+        old_commit: String,
+        new_commit: String,
+        target: String,
+    },
     /// `branch <name> [base]` succeeded.
     #[serde(rename = "create")]
     Create { name: String, commit: String },
@@ -154,6 +162,7 @@ impl BranchOutput {
         matches!(
             self,
             Self::Create { .. }
+                | Self::Reset { .. }
                 | Self::Delete { .. }
                 | Self::Rename { .. }
                 | Self::Copy { .. }
@@ -201,6 +210,35 @@ pub enum BranchSubcommand {
     /// reuses the diff engine — Lore's `branch diff`).
     #[command(after_help = BRANCH_DIFF_EXAMPLES)]
     Diff(BranchDiffArgs),
+    /// Move a branch tip to a target commit without touching the worktree
+    /// (Lore's `branch reset`; enforces protect/archive metadata).
+    #[command(after_help = BRANCH_RESET_EXAMPLES)]
+    Reset(BranchResetArgs),
+}
+
+pub const BRANCH_RESET_EXAMPLES: &str = "\
+EXAMPLES:
+    libra branch reset feature main~2     Move feature's tip to main~2
+    libra branch reset hotfix abc123      Move hotfix to a commit by OID prefix
+    libra metadata set --branch rel protect true    Protect rel from resets
+    libra metadata unset --branch rel protect       Lift the protection
+
+NOTES:
+    The index and working tree are NEVER touched — resetting the CURRENTLY
+    checked-out branch is refused (use `libra reset` for that). Protected or
+    archived branches (metadata) refuse with LBR-POLICY-001; there is no
+    --force — lift the flag explicitly, reset, then re-protect (auditable).
+    A reflog entry is written for the moved branch.";
+
+#[derive(Parser, Debug)]
+pub struct BranchResetArgs {
+    /// The LOCAL branch whose tip to move.
+    #[clap(value_name = "BRANCH")]
+    pub branch: String,
+
+    /// The commit-ish to move it to (branch, tag, OID prefix, HEAD~n, …).
+    #[clap(value_name = "TARGET")]
+    pub target: String,
 }
 
 #[derive(Parser, Debug)]
@@ -381,6 +419,184 @@ pub struct BranchArgs {
 }
 /// Fire-and-forget entry: prints the rendered error to stderr but does not
 /// signal exit code.
+/// `branch reset` (lore.md §1.13): move a LOCAL branch tip to a target
+/// commit through the authoritative SQLite transaction — reference update +
+/// branch reflog entry — WITHOUT touching the index or worktree. The first
+/// enforcement consumer of the 1.5 protect/archive metadata: both flags are
+/// re-checked fail-closed INSIDE the transaction (a metadata read error or a
+/// concurrently-set flag rolls back before any write), and the checked-out
+/// branch is re-checked in-txn too (a concurrent `switch` cannot slip a
+/// phantom-staged-diff state through). No `--force`: lift the flag
+/// explicitly via `metadata unset`, reset, re-protect — auditable.
+async fn execute_reset_safe(args: BranchResetArgs, output: &OutputConfig) -> CliResult<()> {
+    crate::utils::util::require_repo().map_err(|_| CliError::repo_not_found())?;
+    let branch = args.branch.clone();
+
+    if crate::internal::branch::is_ai_managed_branch(&branch) {
+        return Err(CliError::failure(format!(
+            "branch '{branch}' is AI-managed; refusing to reset it"
+        ))
+        .with_stable_code(StableErrorCode::ConflictOperationBlocked));
+    }
+    // Existence (with suggestions) + current-branch preflights (UX; both are
+    // re-verified authoritatively inside the txn).
+    let existing = Branch::find_branch_result(&branch, None)
+        .await
+        .map_err(map_branch_store_error)
+        .map_err(CliError::from)?;
+    let Some(existing) = existing else {
+        return Err(CliError::from(branch_not_found_error(&branch).await));
+    };
+    if let Head::Branch(current) = Head::current().await
+        && current == branch
+    {
+        return Err(CliError::from(BranchError::ResetCurrentBranch(branch)));
+    }
+    // Target must resolve AND load as a commit — a ref is never pointed at a
+    // missing or non-commit object.
+    let target_commit = get_target_commit(&args.target).await.map_err(|_| {
+        CliError::fatal(format!("cannot resolve target '{}'", args.target))
+            .with_stable_code(StableErrorCode::CliInvalidTarget)
+    })?;
+    let _: Commit = load_object(&target_commit).map_err(|error| {
+        CliError::fatal(format!(
+            "target '{}' does not point at a loadable commit: {error}",
+            args.target
+        ))
+        .with_stable_code(StableErrorCode::CliInvalidTarget)
+    })?;
+    // Preflight policy checks (friendly errors; authoritative re-check in-txn).
+    {
+        let db = crate::internal::db::get_db_conn_instance().await;
+        if crate::internal::metadata::MetadataKv::is_protected_with_conn(&db, &branch)
+            .await
+            .map_err(|e| {
+                CliError::fatal(format!("failed to read branch policy metadata: {e}"))
+                    .with_stable_code(StableErrorCode::IoReadFailed)
+            })?
+        {
+            return Err(CliError::from(BranchError::Protected(branch)));
+        }
+        if crate::internal::metadata::MetadataKv::is_archived_with_conn(&db, &branch)
+            .await
+            .map_err(|e| {
+                CliError::fatal(format!("failed to read branch policy metadata: {e}"))
+                    .with_stable_code(StableErrorCode::IoReadFailed)
+            })?
+        {
+            return Err(CliError::from(BranchError::Archived(branch)));
+        }
+    }
+
+    let old_commit = existing.commit.to_string();
+    let new_commit = target_commit.to_string();
+    let meta = OperationMeta {
+        command_name: "branch".to_string(),
+        description: format!("reset branch {branch} to {}", args.target),
+        actor: operation_actor().await,
+        repo_id: current_repo_id_for_operation()
+            .await
+            .map_err(CliError::from)?,
+        args_digest: Some(branch_operation_args_digest("reset", &branch, &new_commit)),
+    };
+    // Sentinel prefixes preserve the TYPED refusal through DbErr::Custom so a
+    // race-window refusal still surfaces as LBR-POLICY-001 / the current-
+    // branch message rather than a generic storage error.
+    const SENTINEL_PROTECTED: &str = "LIBRA_POLICY_PROTECTED:";
+    const SENTINEL_ARCHIVED: &str = "LIBRA_POLICY_ARCHIVED:";
+    const SENTINEL_CURRENT: &str = "LIBRA_RESET_CURRENT:";
+    let branch_for_txn = branch.clone();
+    let target_for_txn = args.target.clone();
+    let new_for_txn = target_commit;
+    let result = with_operation_log(meta, OperationScope::default(), move |txn| {
+        Box::pin(async move {
+            // Authoritative, fail-closed policy gate (the 1.5 contract).
+            let protected =
+                crate::internal::metadata::MetadataKv::is_protected_with_conn(txn, &branch_for_txn)
+                    .await
+                    .map_err(|e| DbErr::Custom(format!("policy metadata read failed: {e}")))?;
+            if protected {
+                return Err(DbErr::Custom(format!(
+                    "{SENTINEL_PROTECTED}{branch_for_txn}"
+                )));
+            }
+            let archived =
+                crate::internal::metadata::MetadataKv::is_archived_with_conn(txn, &branch_for_txn)
+                    .await
+                    .map_err(|e| DbErr::Custom(format!("policy metadata read failed: {e}")))?;
+            if archived {
+                return Err(DbErr::Custom(format!(
+                    "{SENTINEL_ARCHIVED}{branch_for_txn}"
+                )));
+            }
+            // Re-check the checked-out branch in-txn: a concurrent `switch`
+            // between preflight and here must not produce phantom staged
+            // diffs on a silently-moved current branch.
+            if let Head::Branch(current) = Head::current_with_conn(txn).await
+                && current == branch_for_txn
+            {
+                return Err(DbErr::Custom(format!("{SENTINEL_CURRENT}{branch_for_txn}")));
+            }
+            let live = Branch::find_branch_result_with_conn(txn, &branch_for_txn, None)
+                .await
+                .map_err(|e| DbErr::Custom(e.to_string()))?
+                .ok_or_else(|| {
+                    DbErr::Custom(format!("branch '{branch_for_txn}' vanished mid-reset"))
+                })?;
+            Branch::update_branch_with_conn(txn, &branch_for_txn, &new_for_txn.to_string(), None)
+                .await?;
+            let context = crate::internal::reflog::ReflogContext {
+                old_oid: live.commit.to_string(),
+                new_oid: new_for_txn.to_string(),
+                action: crate::internal::reflog::ReflogAction::Reset {
+                    target: target_for_txn.clone(),
+                },
+            };
+            crate::internal::reflog::Reflog::insert_single_entry(
+                txn,
+                &context,
+                &format!("refs/heads/{branch_for_txn}"),
+            )
+            .await
+            .map_err(|e| DbErr::Custom(format!("reflog write failed: {e}")))?;
+            Ok::<String, DbErr>(live.commit.to_string())
+        })
+    })
+    .await;
+    let old_commit = match result {
+        Ok(op) => op.payload,
+        Err(error) => {
+            let text = error.to_string();
+            if let Some(name) = text.split(SENTINEL_PROTECTED).nth(1) {
+                return Err(CliError::from(BranchError::Protected(name.to_string())));
+            }
+            if let Some(name) = text.split(SENTINEL_ARCHIVED).nth(1) {
+                return Err(CliError::from(BranchError::Archived(name.to_string())));
+            }
+            if let Some(name) = text.split(SENTINEL_CURRENT).nth(1) {
+                return Err(CliError::from(BranchError::ResetCurrentBranch(
+                    name.to_string(),
+                )));
+            }
+            let _ = &old_commit; // (superseded by the txn's own CAS read)
+            return Err(CliError::fatal(format!("branch reset failed: {text}"))
+                .with_stable_code(StableErrorCode::IoWriteFailed));
+        }
+    };
+
+    let reset_output = BranchOutput::Reset {
+        name: branch,
+        old_commit,
+        new_commit,
+        target: args.target,
+    };
+    render_branch_output(&reset_output, output, None, 0, None).await?;
+    if reset_output.mutated_repo_state() {
+        dispatch_current_repo_vcs_event_to_history(VCS_EVENT_POST_BRANCH).await;
+    }
+    Ok(())
+}
+
 /// `branch diff` (lore.md §1.12): thin sugar over the diff engine — resolve
 /// branch-flavored defaults, then delegate. Tip-to-tip only (the working
 /// tree is never involved), byte-identical output to `libra diff BASE..BRANCH`.
@@ -502,21 +718,28 @@ pub async fn execute(args: BranchArgs) {
 /// - All [`BranchError`] variants are mapped to [`CliError`] via the
 ///   `From` impl which sets stable codes and hints.
 pub async fn execute_safe(args: BranchArgs, output: &OutputConfig) -> CliResult<()> {
-    if let Some(BranchSubcommand::Diff(diff_args)) = args.subcommand {
-        return execute_diff_safe(diff_args, output).await;
+    match args.subcommand {
+        Some(BranchSubcommand::Diff(diff_args)) => {
+            return execute_diff_safe(diff_args, output).await;
+        }
+        Some(BranchSubcommand::Reset(reset_args)) => {
+            return execute_reset_safe(reset_args, output).await;
+        }
+        None => {}
     }
     // Reserved verb guard: when flags force clap into the positional parse
     // (`branch -v diff`, `branch --no-column diff main`, …), the `diff` token
     // lands in `new_branch` — refuse rather than silently create a branch
     // literally named `diff` (documented; escape hatch: `libra switch -c diff`).
-    if args.new_branch.as_deref() == Some("diff") {
-        return Err(CliError::command_usage(
-            "`diff` is a reserved branch verb here (`libra branch diff …`) and branch flags \
-             cannot be combined with it",
-        )
+    if let Some(verb @ ("diff" | "reset")) = args.new_branch.as_deref() {
+        return Err(CliError::command_usage(format!(
+            "`{verb}` is a reserved branch verb here (`libra branch {verb} …`) and branch \
+             flags cannot be combined with it"
+        ))
         .with_stable_code(StableErrorCode::CliInvalidArguments)
-        .with_hint("to diff branches: `libra branch diff [<base>] [<branch>]`")
-        .with_hint("to create a branch literally named `diff`: `libra switch -c diff`"));
+        .with_hint(format!(
+            "to create a branch literally named `{verb}`: `libra switch -c {verb}`"
+        )));
     }
     // Validate the `--column` mode up front so an invalid mode is rejected
     // regardless of output path; the enable decision is recomputed at render.
@@ -556,6 +779,15 @@ enum BranchError {
 
     #[error("branch '{name}' not found")]
     NotFound { name: String, similar: Vec<String> },
+
+    #[error("branch '{0}' is protected; refusing to reset it")]
+    Protected(String),
+
+    #[error("branch '{0}' is archived; refusing to reset it")]
+    Archived(String),
+
+    #[error("cannot reset branch '{0}': it is currently checked out")]
+    ResetCurrentBranch(String),
 
     #[error("Cannot delete the branch '{0}' which you are currently on")]
     DeleteCurrent(String),
@@ -625,6 +857,31 @@ impl From<BranchError> for CliError {
     fn from(error: BranchError) -> Self {
         match error {
             BranchError::NotInRepo => CliError::repo_not_found(),
+            BranchError::Protected(name) => {
+                CliError::fatal(format!("branch '{name}' is protected; refusing to reset it"))
+                    .with_stable_code(StableErrorCode::PolicyRefUpdateBlocked)
+                    .with_hint(format!(
+                        "lift it explicitly: 'libra metadata unset --branch {name} protect', \
+                         reset, then re-protect (auditable; there is no --force)"
+                    ))
+            }
+            BranchError::Archived(name) => {
+                CliError::fatal(format!("branch '{name}' is archived; refusing to reset it"))
+                    .with_stable_code(StableErrorCode::PolicyRefUpdateBlocked)
+                    .with_hint(format!(
+                        "unarchive first: 'libra metadata unset --branch {name} archive'"
+                    ))
+            }
+            BranchError::ResetCurrentBranch(name) => {
+                CliError::fatal(format!(
+                    "cannot reset branch '{name}': it is currently checked out"
+                ))
+                .with_stable_code(StableErrorCode::RepoStateInvalid)
+                .with_hint(
+                    "use 'libra reset [--soft|--mixed|--hard] <target>' to move the checked-out \
+                     branch (it updates HEAD, index and worktree consistently)",
+                )
+            }
             BranchError::InvalidName(name) => {
                 CliError::fatal(format!("'{name}' is not a valid branch name"))
                     .with_stable_code(StableErrorCode::CliInvalidArguments)
@@ -1750,6 +2007,18 @@ async fn render_branch_output(
     }
 
     match result {
+        BranchOutput::Reset {
+            name,
+            old_commit,
+            new_commit,
+            ..
+        } => {
+            println!(
+                "Reset branch '{name}' (was {}, now {})",
+                crate::utils::text::short_display_hash(old_commit),
+                crate::utils::text::short_display_hash(new_commit)
+            );
+        }
         BranchOutput::List {
             branches,
             head_name,

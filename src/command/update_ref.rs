@@ -92,6 +92,8 @@ enum UpdateRefTxError {
     DoesNotExist { ref_name: String },
     #[error("ref storage error: {0}")]
     Storage(String),
+    #[error("branch '{branch}' is {policy}; refusing to update its ref")]
+    PolicyBlocked { branch: String, policy: String },
 }
 
 pub async fn execute(args: UpdateRefArgs) {
@@ -166,6 +168,35 @@ pub async fn execute_safe(args: UpdateRefArgs, output: &OutputConfig) -> CliResu
     let outcome = db
         .transaction(move |txn| {
             Box::pin(async move {
+                // Branch policy (lore.md 1.13): protect/archive metadata is
+                // enforced INSIDE the authoritative txn for every local-head
+                // writer — update-ref would otherwise be a silent bypass of
+                // `branch reset`'s policy layer. Fail-closed: metadata read
+                // errors refuse the update. (update-ref stays plumbing-sharp
+                // otherwise — it may still move the checked-out branch, like
+                // git update-ref.)
+                let protected = crate::internal::metadata::MetadataKv::is_protected_with_conn(
+                    txn,
+                    &branch_name,
+                )
+                .await
+                .map_err(|error| UpdateRefTxError::Storage(error.to_string()))?;
+                if protected {
+                    return Err(UpdateRefTxError::PolicyBlocked {
+                        branch: branch_name.clone(),
+                        policy: "protected".to_string(),
+                    });
+                }
+                let archived =
+                    crate::internal::metadata::MetadataKv::is_archived_with_conn(txn, &branch_name)
+                        .await
+                        .map_err(|error| UpdateRefTxError::Storage(error.to_string()))?;
+                if archived {
+                    return Err(UpdateRefTxError::PolicyBlocked {
+                        branch: branch_name.clone(),
+                        policy: "archived".to_string(),
+                    });
+                }
                 let current = Branch::find_branch_result_with_conn(txn, &branch_name, None)
                     .await
                     .map_err(|error| UpdateRefTxError::Storage(error.to_string()))?
@@ -227,13 +258,34 @@ pub async fn execute_safe(args: UpdateRefArgs, output: &OutputConfig) -> CliResu
         })
         .await
         .map_err(|error| {
-            let message = match error {
-                TransactionError::Connection(error) => error.to_string(),
-                TransactionError::Transaction(error) => error.to_string(),
-            };
-            CliError::fatal(message)
+            // Preserve the policy refusal's dedicated stable code.
+            if let TransactionError::Transaction(UpdateRefTxError::PolicyBlocked {
+                branch,
+                policy,
+            }) = &error
+            {
+                let policy_key = if policy == "protected" {
+                    "protect"
+                } else {
+                    "archive"
+                };
+                CliError::fatal(format!(
+                    "branch '{branch}' is {policy}; refusing to update its ref"
+                ))
                 .with_exit_code(128)
-                .with_stable_code(StableErrorCode::RepoStateInvalid)
+                .with_stable_code(StableErrorCode::PolicyRefUpdateBlocked)
+                .with_hint(format!(
+                    "clear it first: 'libra metadata unset --branch {branch} {policy_key}'"
+                ))
+            } else {
+                let message = match error {
+                    TransactionError::Connection(error) => error.to_string(),
+                    TransactionError::Transaction(error) => error.to_string(),
+                };
+                CliError::fatal(message)
+                    .with_exit_code(128)
+                    .with_stable_code(StableErrorCode::RepoStateInvalid)
+            }
         })?;
 
     if output.is_json() {

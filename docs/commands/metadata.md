@@ -54,7 +54,8 @@ Metadata is scoped: exactly one of `--branch <name>` / `--repo` /
   full resolved commit OID. The whole per-commit document is bounded at 1 MiB.
 
 Well-known branch keys — `protect`, `archive`, and the `lineage.*` prefix — are
-**recorded but not yet enforced**: setting them prints a notice. Enforcement
+**enforced for `branch reset` and `update-ref`** (lore.md 1.13; delete/push/
+merge enforcement pending): setting them prints a notice. Further enforcement
 lands once, in the future branch-policy layer (lore.md 1.13), which will read
 these keys fail-closed (a corrupted value counts as protected, never silently
 unprotected).
@@ -96,7 +97,7 @@ case-sensitive (max 256 bytes, no whitespace); values are capped at 1 MiB.
 ## Examples
 
 ```bash
-# Record branch protection (not yet enforced) and read it back.
+# Protect a branch (enforced for branch reset/update-ref) and read it back.
 libra metadata set protect true --branch main
 libra metadata get protect --branch main
 

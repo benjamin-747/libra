@@ -26,6 +26,7 @@ pub mod auth;
 pub mod branch;
 pub mod config;
 pub mod db;
+pub mod deps;
 pub mod dirty;
 pub mod head;
 pub mod layer;

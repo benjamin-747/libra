@@ -308,6 +308,7 @@ mod commit_tree_test;
 mod completions_test;
 mod config_test;
 mod credential_test;
+mod deps_test;
 mod describe_long_test;
 mod describe_test;
 mod diff_plumbing_test;

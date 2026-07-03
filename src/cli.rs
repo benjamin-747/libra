@@ -36,7 +36,7 @@ Command Groups:
   Commit And Branching    commit, branch, switch, checkout, tag, merge, rebase, reset, cherry-pick, revert, rerere, metadata
   Remote And Cloud        remote, fetch, pull, push, open, cloud, cache, publish, credential, bundle, auth
   AI And Automation       code, code-control, automation, usage, graph, sandbox, agent, service
-  Maintenance And Plumbing fsck, maintenance, repack, logfile, cat-file, hash-object, write-tree, read-tree, update-index, update-ref, merge-file, merge-base, apply, diff-tree, diff-index, diff-files, fast-export, fast-import, replace, verify-pack, rev-parse, rev-list, symbolic-ref, reflog, bisect, for-each-ref, commit-tree, file, alternates
+  Maintenance And Plumbing fsck, maintenance, repack, logfile, cat-file, hash-object, write-tree, read-tree, update-index, update-ref, merge-file, merge-base, apply, diff-tree, diff-index, diff-files, fast-export, fast-import, replace, verify-pack, rev-parse, rev-list, symbolic-ref, reflog, bisect, for-each-ref, commit-tree, file, alternates, deps
 
 Help Topics:
   error-codes  Print the stable CLI error code table (`libra help error-codes`)
@@ -372,6 +372,11 @@ enum Commands {
         after_help = command::alternates::ALTERNATES_EXAMPLES
     )]
     Alternates(command::alternates::AlternatesArgs),
+    #[command(
+        about = "Manage the file dependency graph (Libra extension)",
+        after_help = command::deps::DEPS_EXAMPLES
+    )]
+    Deps(command::deps::DepsArgs),
     #[command(
         name = "sparse-view",
         about = "Manage the read-only sparse view filter over ls-files/diff (Libra extension)",
@@ -1553,6 +1558,7 @@ pub async fn parse_async(args: Option<&[&str]>) -> CliResult<()> {
         Commands::Alternates(cmd_args) => {
             command::alternates::execute_safe(cmd_args, &output).await?
         }
+        Commands::Deps(cmd_args) => command::deps::execute_safe(cmd_args, &output).await?,
         Commands::SparseView(cmd_args) => {
             command::sparse_view::execute_safe(cmd_args, &output).await?
         }

@@ -56,10 +56,10 @@ pub const LIBRA_ERROR_JSON_ENV: &str = "LIBRA_ERROR_JSON";
 /// fine-grained 2..=9 category codes. Recognised values: `1`, `true`, `yes`, `on`.
 pub const LIBRA_FINE_EXIT_CODES_ENV: &str = "LIBRA_FINE_EXIT_CODES";
 /// Canonical issue tracker URL shown for unexpected internal failures.
-pub const LIBRA_ISSUES_URL: &str = "https://github.com/web3infra-foundation/libra/issues";
+pub const LIBRA_ISSUES_URL: &str = "https://github.com/libra-tools/libra/issues";
 /// Human-facing hint appended to internal-invariant errors.
 pub const INTERNAL_ERROR_REPORT_HINT: &str =
-    "please report this issue at: https://github.com/web3infra-foundation/libra/issues";
+    "please report this issue at: https://github.com/libra-tools/libra/issues";
 
 /// Returns `true` when `LIBRA_FINE_EXIT_CODES=1` is set, enabling backward-
 /// compatible category-specific exit codes (2–9) instead of the default
@@ -787,7 +787,7 @@ impl CliError {
         serde_json::to_string(&self.report()).unwrap_or_else(|_| {
             "{\"ok\":false,\"error_code\":\"LBR-INTERNAL-001\",\"category\":\"internal\",\
 \"exit_code\":128,\"severity\":\"fatal\",\"message\":\"failed to serialize CLI error report\",\
-\"hints\":[\"please report this issue at: https://github.com/web3infra-foundation/libra/issues\"]}"
+\"hints\":[\"please report this issue at: https://github.com/libra-tools/libra/issues\"]}"
                 .to_string()
         })
     }
@@ -1495,7 +1495,7 @@ mod tests {
         let rendered = CliError::internal("status index should be loaded").render();
         assert_eq!(
             rendered,
-            "fatal: status index should be loaded\n\nHint: please report this issue at: https://github.com/web3infra-foundation/libra/issues"
+            "fatal: status index should be loaded\n\nHint: please report this issue at: https://github.com/libra-tools/libra/issues"
         );
     }
 
@@ -1504,7 +1504,7 @@ mod tests {
         let rendered = CliError::fatal("tree creation failed")
             .with_stable_code(StableErrorCode::InternalInvariant)
             .render();
-        assert!(rendered.contains("https://github.com/web3infra-foundation/libra/issues"));
+        assert!(rendered.contains("https://github.com/libra-tools/libra/issues"));
     }
 
     #[test]
@@ -1520,7 +1520,7 @@ mod tests {
         assert_eq!(payload["error_code"], "LBR-INTERNAL-001");
         assert_eq!(
             payload["hints"][0],
-            "please report this issue at: https://github.com/web3infra-foundation/libra/issues"
+            "please report this issue at: https://github.com/libra-tools/libra/issues"
         );
     }
 

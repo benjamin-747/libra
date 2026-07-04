@@ -53,7 +53,7 @@ use crate::{
 // (`CommitError::TreeCreation`) so users can report unexpected
 // tree-build failures. Mirrors push.rs / tag.rs's hint pattern per
 // Cross-Cutting G.
-const ISSUE_URL: &str = "https://github.com/web3infra-foundation/libra/issues";
+const ISSUE_URL: &str = "https://github.com/libra-tools/libra/issues";
 
 /// `--help` examples shown in `libra commit --help` output.
 ///

@@ -15,7 +15,7 @@
 Libra 在 [`agent.md`](../ai/object-model.md) 与
 [`ai-object-model-reference.md`](../ai/object-model-reference.md) 中所记录的三层对象模型。
 
-如果本文档与 `agent.md` 或 `agent-workflow.md`（见 [`agent-workflow.md`](../ai/workflow.md)）有冲突，以那两份文档为准。此外，外部 agent 捕获契约（见 [`docs/development/commands/agent.md`](./commands/agent.md)）在其覆盖的存储与捕获面、MCP 边界（见 [`docs/development/mcp.md`](./mcp.md)）在其覆盖的 MCP 命令面，亦各自为准。
+如果本文档与 `agent.md` 或 `agent-workflow.md`（见 [`agent-workflow.md`](../ai/workflow.md)）有冲突，以那两份文档为准。此外，外部 agent 捕获契约（见 [`docs/development/tracing/agent.md`](./commands/agent.md)）在其覆盖的存储与捕获面、MCP 边界（见 [`docs/development/mcp.md`](./mcp.md)）在其覆盖的 MCP 命令面，亦各自为准。
 
 ### 0.1 方案审查结论
 
@@ -192,7 +192,7 @@ episodic.findings.context-window-too-small
 
 Memory 遵循与 Libra 其余部分**相同的快照（Snapshot）/ 事件（Event）/ 投影（Projection）三层模型**（见 `../ai/object-model-reference.md`）。三层缺一不可；省略其中任何一层都会重新引入 CLAUDE.md 那种反模式。
 
-不过这里有一条至关重要的存储边界必须先讲清楚。Memory 采用的存储策略与**外部 agent 捕获完全相同**（参见 `docs/development/commands/agent.md` 的「持久化与对象边界」）：把自定义 JSON 序列化为**普通的 git blob**，组织进 tree，提交到专用的 `libra/memory*` ref，再叠加一层**可重建的 SQLite 投影**。Memory **不**向 git-internal 新增任何 `ObjectType` 变体。git-internal 的 typed AI 对象族（`ObjectType::is_ai_object()` 这个闭合枚举：Intent/Plan/Task/Run/PatchSet/ContextSnapshot/Provenance 等快照，以及 RunEvent/TaskEvent/IntentEvent/PlanStepEvent/RunUsage/ToolInvocation/Evidence/Decision/ContextFrame 等事件）**专属于内部 AgentRuntime**，落在孤儿分支 `libra/intent` 上。Memory 借用的只是 git-internal 对象模型在快照/事件/投影上的那套**「设计纪律」**（见 `../ai/object-model-reference.md`）——但 `MemoryNote`/`MemoryEvent` 的字节是**自定义 JSON blob**（与 `traces` 上的 checkpoint 同构），并不是 git-internal 的一等对象。因此，下文中 `evidence_refs` 所指向的 git-internal `Evidence`/`Run`/`Decision` 对象（它们位于 `libra/intent` 平面）与 commit OID 之间，构成的是**跨平面引用**：Memory 平面的 blob 引用了 AgentRuntime 平面的一等对象，但两者各自独立存储、各自版本化。
+不过这里有一条至关重要的存储边界必须先讲清楚。Memory 采用的存储策略与**外部 agent 捕获完全相同**（参见 `docs/development/tracing/agent.md` 的「持久化与对象边界」）：把自定义 JSON 序列化为**普通的 git blob**，组织进 tree，提交到专用的 `libra/memory*` ref，再叠加一层**可重建的 SQLite 投影**。Memory **不**向 git-internal 新增任何 `ObjectType` 变体。git-internal 的 typed AI 对象族（`ObjectType::is_ai_object()` 这个闭合枚举：Intent/Plan/Task/Run/PatchSet/ContextSnapshot/Provenance 等快照，以及 RunEvent/TaskEvent/IntentEvent/PlanStepEvent/RunUsage/ToolInvocation/Evidence/Decision/ContextFrame 等事件）**专属于内部 AgentRuntime**，落在孤儿分支 `libra/intent` 上。Memory 借用的只是 git-internal 对象模型在快照/事件/投影上的那套**「设计纪律」**（见 `../ai/object-model-reference.md`）——但 `MemoryNote`/`MemoryEvent` 的字节是**自定义 JSON blob**（与 `traces` 上的 checkpoint 同构），并不是 git-internal 的一等对象。因此，下文中 `evidence_refs` 所指向的 git-internal `Evidence`/`Run`/`Decision` 对象（它们位于 `libra/intent` 平面）与 commit OID 之间，构成的是**跨平面引用**：Memory 平面的 blob 引用了 AgentRuntime 平面的一等对象，但两者各自独立存储、各自版本化。
 
 ### 4.1 `MemoryNote` —— 快照 [S]
 
@@ -894,9 +894,9 @@ PreToolUse / PostToolUse → ToolUse（pre / post 由事件元数据区分，
 
 记忆消费的是**归一化之后**的 `LifecycleEvent`，因此与平面（plane）无关：
 无论该 turn 来自内部 `libra code` 的 AgentRuntime，还是来自
-`docs/development/commands/agent.md` 所描述的外部 observed-agent 捕获，
+`docs/development/tracing/agent.md` 所描述的外部 observed-agent 捕获，
 集成都同样适用。由生命周期事件触发的 memory 写入同样遵守
-`docs/development/commands/agent.md` AG-19 的「持久化前先编辑」
+`docs/development/tracing/agent.md` AG-19 的「持久化前先编辑」
 （redaction-before-persist）与「按 owner 过滤」（owner-filtering）纪律。
 
 ### 11.1 SessionStart

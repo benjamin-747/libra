@@ -29,7 +29,7 @@ async fn test_open_remote_origin() {
     remote::execute_safe(
         RemoteCmds::Add {
             name: "origin".into(),
-            url: "git@github.com:web3infra-foundation/libra.git".into(),
+            url: "git@github.com:libra-tools/libra.git".into(),
             fetch: false,
             track: vec![],
             master: None,
@@ -114,7 +114,7 @@ fn test_open_json_output_uses_origin_remote() {
             "remote",
             "add",
             "origin",
-            "git@github.com:web3infra-foundation/libra.git",
+            "git@github.com:libra-tools/libra.git",
         ],
         repo.path(),
     );
@@ -128,7 +128,7 @@ fn test_open_json_output_uses_origin_remote() {
     assert_eq!(json["data"]["remote"], "origin");
     assert_eq!(
         json["data"]["web_url"],
-        "https://github.com/web3infra-foundation/libra"
+        "https://github.com/libra-tools/libra"
     );
     assert_eq!(json["data"]["launched"], false);
 }
@@ -143,7 +143,7 @@ fn test_open_json_output_does_not_require_browser_launcher() {
             "remote",
             "add",
             "origin",
-            "git@github.com:web3infra-foundation/libra.git",
+            "git@github.com:libra-tools/libra.git",
         ],
         repo.path(),
     );
@@ -176,7 +176,7 @@ fn test_open_json_output_falls_back_to_origin_when_head_is_detached() {
             "remote",
             "add",
             "origin",
-            "git@github.com:web3infra-foundation/libra.git",
+            "git@github.com:libra-tools/libra.git",
         ],
         repo.path(),
     );
@@ -210,7 +210,7 @@ fn test_open_json_output_falls_back_to_origin_when_head_is_detached() {
     assert_eq!(json["data"]["remote"], "origin");
     assert_eq!(
         json["data"]["web_url"],
-        "https://github.com/web3infra-foundation/libra"
+        "https://github.com/libra-tools/libra"
     );
     assert_eq!(json["data"]["launched"], false);
 }
@@ -243,7 +243,7 @@ fn test_open_json_output_transforms_explicit_ssh_url() {
         &[
             "open",
             "--json",
-            "ssh://git@github.com/web3infra-foundation/libra.git",
+            "ssh://git@github.com/libra-tools/libra.git",
         ],
         temp.path(),
     );
@@ -253,11 +253,11 @@ fn test_open_json_output_transforms_explicit_ssh_url() {
     assert!(json["data"]["remote"].is_null());
     assert_eq!(
         json["data"]["remote_url"],
-        "ssh://git@github.com/web3infra-foundation/libra.git"
+        "ssh://git@github.com/libra-tools/libra.git"
     );
     assert_eq!(
         json["data"]["web_url"],
-        "https://github.com/web3infra-foundation/libra"
+        "https://github.com/libra-tools/libra"
     );
     assert_eq!(json["data"]["launched"], false);
 }
@@ -267,11 +267,7 @@ fn test_open_json_output_keeps_explicit_https_url() {
     let temp = tempdir().unwrap();
 
     let output = run_libra_command(
-        &[
-            "open",
-            "--json",
-            "https://github.com/web3infra-foundation/libra.git",
-        ],
+        &["open", "--json", "https://github.com/libra-tools/libra.git"],
         temp.path(),
     );
 
@@ -283,11 +279,11 @@ fn test_open_json_output_keeps_explicit_https_url() {
     assert!(json["data"]["remote"].is_null());
     assert_eq!(
         json["data"]["remote_url"],
-        "https://github.com/web3infra-foundation/libra.git"
+        "https://github.com/libra-tools/libra.git"
     );
     assert_eq!(
         json["data"]["web_url"],
-        "https://github.com/web3infra-foundation/libra"
+        "https://github.com/libra-tools/libra"
     );
     assert_eq!(json["data"]["launched"], false);
 }

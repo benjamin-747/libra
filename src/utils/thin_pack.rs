@@ -3,7 +3,7 @@
 //! them via `index-pack --fix-thin` (or resolves them in `unpack-objects`
 //! below the unpack limit).
 //!
-//! The delta encoder is SELF-CONTAINED: git-internal 0.7.6's `delta` module
+//! The delta encoder is SELF-CONTAINED: git-internal's `delta` module
 //! is PRIVATE (and `#![allow(dead_code)]` — unused by its own pack paths),
 //! so Libra implements the standard Git delta wire format directly, with
 //! git's own conventions: copy ops carry at most 64 KiB (0x10000) per op —

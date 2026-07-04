@@ -55,7 +55,7 @@ use crate::{
 /// GitHub Issues URL surfaced on `StashError::Other` so users can report
 /// catch-all bucket failures that map to `InternalInvariant`. Mirrors
 /// push.rs / tag.rs's hint pattern per Cross-Cutting G.
-const ISSUE_URL: &str = "https://github.com/web3infra-foundation/libra/issues";
+const ISSUE_URL: &str = "https://github.com/libra-tools/libra/issues";
 
 // ── Typed error ──────────────────────────────────────────────────────
 

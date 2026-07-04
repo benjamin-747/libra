@@ -100,8 +100,8 @@ fn docs_consistency_covers_code_command_router_contracts() {
     let web_mod = read_repo_file("src/internal/ai/web/mod.rs");
     let code_doc = read_repo_file("docs/commands/code.md");
     let code_control_doc = read_repo_file("docs/commands/code-control.md");
-    let integration_plan = read_repo_file("docs/development/integration-test-plan.md");
-    let agent_doc = read_repo_file("docs/development/commands/agent.md");
+    let integration_plan = read_repo_file("docs/development/integration/integration-test-plan.md");
+    let agent_doc = read_repo_file("docs/development/tracing/agent.md");
     let workflow = read_repo_file(".github/workflows/base.yml");
     let source_and_docs = [
         web_mod.as_str(),
@@ -158,17 +158,17 @@ fn docs_consistency_covers_code_command_router_contracts() {
         (
             integration_plan.as_str(),
             "test-provider",
-            "docs/development/integration-test-plan.md",
+            "docs/development/integration/integration-test-plan.md",
         ),
         (
             integration_plan.as_str(),
             "code_ui_scenarios",
-            "docs/development/integration-test-plan.md",
+            "docs/development/integration/integration-test-plan.md",
         ),
         (
             agent_doc.as_str(),
             "diagnostics_redaction_test",
-            "docs/development/commands/agent.md",
+            "docs/development/tracing/agent.md",
         ),
     ] {
         assert_contains(body, needle, context);

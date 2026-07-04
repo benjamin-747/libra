@@ -53,7 +53,7 @@ pub fn exec(mut args: Vec<&str>) -> CliResult<()> {
 ///   print them itself, leaving error rendering to the caller (typically `main.rs`).
 pub async fn exec_async(mut args: Vec<&str>) -> CliResult<()> {
     args.insert(0, env!("CARGO_PKG_NAME"));
-    cli::parse_async(Some(&args)).await
+    Box::pin(async move { cli::parse_async(Some(&args)).await }).await
 }
 
 #[cfg(test)]

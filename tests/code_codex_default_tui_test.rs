@@ -1,4 +1,4 @@
-//! Static guard for Phase 2 Task 2.7 of `docs/development/commands/agent.md` Part B
+//! Static guard for Phase 2 Task 2.7 of `docs/development/tracing/agent.md` Part B
 //! (merged from the original TUI improvement plan per the 2026-05-02
 //! agent.md consolidation).
 //!

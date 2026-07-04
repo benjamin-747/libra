@@ -23,7 +23,7 @@ GIT_INDEX_FILE 等价物）合成离线修订组合环路。发布走 `update-re
 
 ## 设计要点
 
-- **消息序列化陷阱（审阅 must-fix）**：git-internal 0.7.6 的
+- **消息序列化陷阱（审阅 must-fix）**：git-internal 的
   `Commit::to_data()` 在 committer 行后**不加分隔符**——头/体空行分隔必须是
   message 字段自身的前导 `\n`。与 porcelain 同走 `format_commit_msg(msg,
   None)`（= `"\n{msg}"`）。cat-file 断言钉住。潜在同源坑：

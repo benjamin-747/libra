@@ -12,7 +12,10 @@ use git_internal::{
     hash::ObjectHash,
     internal::{
         index::{Index, IndexEntry},
-        object::{commit::Commit, tree::Tree},
+        object::{
+            commit::Commit,
+            tree::{Tree, TreeItemMode},
+        },
     },
 };
 use serde::Serialize;
@@ -900,7 +903,7 @@ fn rebuild_index_from_tree_typed(
         };
 
         match item.mode {
-            git_internal::internal::object::tree::TreeItemMode::Tree => {
+            TreeItemMode::Tree => {
                 let subtree: Tree = load_object(&item.id)
                     .map_err(|e| object_load_error("tree", item.id.to_string(), e.to_string()))?;
                 rebuild_index_from_tree_typed(&subtree, index, &full_path)?;
@@ -912,12 +915,26 @@ fn rebuild_index_from_tree_typed(
                 let blob = git_internal::internal::object::blob::Blob::load(&item.id);
 
                 // Create IndexEntry with the tree's blob hash
-                let entry = IndexEntry::new_from_blob(full_path, item.id, blob.data.len() as u32);
+                let mut entry =
+                    IndexEntry::new_from_blob(full_path, item.id, blob.data.len() as u32);
+                entry.mode = tree_item_mode_to_index_mode(item.mode)?;
                 index.add(entry);
             }
         }
     }
     Ok(())
+}
+
+fn tree_item_mode_to_index_mode(mode: TreeItemMode) -> Result<u32, ResetError> {
+    match mode {
+        TreeItemMode::Blob => Ok(0o100644),
+        TreeItemMode::BlobExecutable => Ok(0o100755),
+        TreeItemMode::Link => Ok(0o120000),
+        TreeItemMode::Commit => Ok(0o160000),
+        TreeItemMode::Tree => Err(ResetError::RevisionCorrupt(
+            "tree entry cannot be stored directly in index".to_string(),
+        )),
+    }
 }
 
 /// Restore the working directory from a tree structure.
@@ -948,7 +965,7 @@ fn restore_working_directory_from_tree_counted_typed(
         let file_path = workdir.join(&full_path);
 
         match item.mode {
-            git_internal::internal::object::tree::TreeItemMode::Tree => {
+            TreeItemMode::Tree => {
                 // Create directory
                 fs::create_dir_all(&file_path).map_err(|e| {
                     ResetError::WorktreeRestore(format!(
@@ -1002,10 +1019,37 @@ fn restore_working_directory_from_tree_counted_typed(
                     })?;
                     files_restored += 1;
                 }
+                apply_worktree_blob_mode(&file_path, item.mode)?;
             }
         }
     }
     Ok(files_restored)
+}
+
+#[cfg(unix)]
+fn apply_worktree_blob_mode(path: &Path, mode: TreeItemMode) -> Result<(), ResetError> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mode = match mode {
+        TreeItemMode::Blob => Some(0o644),
+        TreeItemMode::BlobExecutable => Some(0o755),
+        _ => None,
+    };
+    if let Some(mode) = mode {
+        fs::set_permissions(path, fs::Permissions::from_mode(mode)).map_err(|error| {
+            ResetError::WorktreeRestore(format!(
+                "failed to set mode on {}: {}",
+                path.display(),
+                error
+            ))
+        })?;
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn apply_worktree_blob_mode(_path: &Path, _mode: TreeItemMode) -> Result<(), ResetError> {
+    Ok(())
 }
 
 /// Remove empty directories from the working directory.
@@ -1210,7 +1254,7 @@ fn find_tree_item_recursive(
             if index == parts.len() - 1 {
                 // Found the target
                 return Ok(Some(item.clone()));
-            } else if item.mode == git_internal::internal::object::tree::TreeItemMode::Tree {
+            } else if item.mode == TreeItemMode::Tree {
                 // Continue searching in subtree
                 let subtree = load_object::<Tree>(&item.id)
                     .map_err(|e| object_load_error("tree", item.id.to_string(), e.to_string()))?;

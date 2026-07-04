@@ -1091,6 +1091,45 @@ fn parse_error_hints(err: &clap::Error) -> Vec<String> {
     hints
 }
 
+fn push_unique_hint(hints: &mut Vec<String>, hint: String) {
+    if !hint.is_empty() && !hints.iter().any(|existing| existing == &hint) {
+        hints.push(hint);
+    }
+}
+
+fn top_level_unknown_command_hints(err: &clap::Error) -> Vec<String> {
+    let mut hints = parse_error_hints(err);
+
+    if let Some(ContextValue::Strings(suggestions)) = err.get(ContextKind::SuggestedSubcommand) {
+        match suggestions.as_slice() {
+            [] => {}
+            [suggestion] => push_unique_hint(
+                &mut hints,
+                format!("a similar subcommand exists: '{suggestion}'"),
+            ),
+            suggestions => {
+                let suggestions = suggestions
+                    .iter()
+                    .map(|suggestion| format!("'{suggestion}'"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                push_unique_hint(
+                    &mut hints,
+                    format!("similar subcommands exist: {suggestions}"),
+                );
+            }
+        }
+    }
+
+    if let Some(ContextValue::StyledStrs(suggestions)) = err.get(ContextKind::Suggested) {
+        for suggestion in suggestions {
+            push_unique_hint(&mut hints, suggestion.to_string().trim().to_string());
+        }
+    }
+
+    hints
+}
+
 const REMOVED_CODE_CLAUDECODE_FLAGS: &[&str] = &[
     "--resume-session",
     "--fork-session",
@@ -1362,6 +1401,56 @@ fn print_error_codes_help() -> CliResult<()> {
     Ok(())
 }
 
+fn apply_global_runtime_flags(args: &Cli) -> CliResult<()> {
+    // `--sync-data` forces object-write fsync on for this run, layering over the
+    // `LIBRA_SYNC_DATA` env default. The flag can only turn it on; absence leaves
+    // whatever the env initialised.
+    if args.sync_data {
+        utils::atomic_write::set_sync_data(true);
+    }
+
+    // Object read policy (lore.md §0.8): the `LIBRA_READ_POLICY` env var is the
+    // baseline (auto/offline/local/remote); the `--offline` flag overrides it to
+    // local-only. ALWAYS set it (resolving to Auto when nothing is requested) so
+    // a reused process — TUI, tests — never inherits a stale policy. An
+    // unrecognized env value is a hard error rather than a silent Auto fallback,
+    // so a typo cannot quietly re-enable durable-tier reads.
+    let read_policy = if args.offline {
+        utils::read_policy::ReadPolicy::LocalOnly
+    } else {
+        utils::read_policy::read_policy_from_env().map_err(|message| {
+            CliError::command_usage(format!("invalid LIBRA_READ_POLICY: {message}"))
+                .with_stable_code(utils::error::StableErrorCode::CliInvalidArguments)
+                .with_exit_code(128)
+        })?
+    };
+    utils::read_policy::set_read_policy(read_policy);
+
+    // Resource limits (lore.md §0.9): `--max-connections` flag wins over the
+    // `LIBRA_MAX_CONNECTIONS` env baseline, else the default. Always set so a
+    // reused process never inherits a stale limit; an invalid env value errors.
+    let max_connections = match args.max_connections {
+        Some(limit) => limit,
+        None => utils::resource_limits::max_connections_from_env()
+            .map_err(|message| {
+                CliError::command_usage(format!("invalid LIBRA_MAX_CONNECTIONS: {message}"))
+                    .with_stable_code(utils::error::StableErrorCode::CliInvalidArguments)
+                    .with_exit_code(128)
+            })?
+            .unwrap_or(utils::resource_limits::DEFAULT_MAX_CONNECTIONS),
+    };
+    utils::resource_limits::set_max_connections(max_connections);
+
+    Ok(())
+}
+
+fn prepare_cli_invocation_state() {
+    utils::output::reset_warning_tracker();
+    // Pick up `LIBRA_SYNC_DATA` so atomic object writes fsync when requested
+    // (lore.md §7.7; the `--sync-data` flag of §0.5 layers on top).
+    utils::atomic_write::init_sync_data_from_env();
+}
+
 fn is_top_level_unknown_command(argv: &[String], err: &clap::Error) -> Option<String> {
     let invalid = match err.get(ContextKind::InvalidSubcommand) {
         Some(ContextValue::String(cmd)) => cmd,
@@ -1378,7 +1467,7 @@ fn is_top_level_unknown_command(argv: &[String], err: &clap::Error) -> Option<St
 
 fn classify_parse_error(argv: &[String], err: &clap::Error) -> CliError {
     if let Some(cmd) = is_top_level_unknown_command(argv, err) {
-        let (_, _, hints) = parse_error_components(err);
+        let hints = top_level_unknown_command_hints(err);
         let mut cli_error = CliError::unknown_command(format!(
             "libra: '{cmd}' is not a libra command. See 'libra --help'."
         ));
@@ -1445,10 +1534,7 @@ pub async fn parse_async(args: Option<&[&str]>) -> CliResult<()> {
     };
     let argv = rewrite_log_short_number_args(argv);
     let argv = rewrite_index_pack_progress_args(argv);
-    utils::output::reset_warning_tracker();
-    // Pick up `LIBRA_SYNC_DATA` so atomic object writes fsync when requested
-    // (lore.md §7.7; the `--sync-data` flag of §0.5 layers on top).
-    utils::atomic_write::init_sync_data_from_env();
+    prepare_cli_invocation_state();
     if is_error_codes_help_topic(&argv) {
         return print_error_codes_help();
     }
@@ -1466,44 +1552,7 @@ pub async fn parse_async(args: Option<&[&str]>) -> CliResult<()> {
             _ => return Err(classify_parse_error(&argv, &err)),
         },
     };
-    // `--sync-data` forces object-write fsync on for this run, layering over the
-    // `LIBRA_SYNC_DATA` env default (lore.md §0.5). The flag can only turn it on;
-    // absence leaves whatever the env initialised.
-    if args.sync_data {
-        utils::atomic_write::set_sync_data(true);
-    }
-
-    // Object read policy (lore.md §0.8): the `LIBRA_READ_POLICY` env var is the
-    // baseline (auto/offline/local/remote); the `--offline` flag overrides it to
-    // local-only. ALWAYS set it (resolving to Auto when nothing is requested) so
-    // a reused process — TUI, tests — never inherits a stale policy. An
-    // unrecognized env value is a hard error rather than a silent Auto fallback,
-    // so a typo cannot quietly re-enable durable-tier reads.
-    let read_policy = if args.offline {
-        utils::read_policy::ReadPolicy::LocalOnly
-    } else {
-        utils::read_policy::read_policy_from_env().map_err(|message| {
-            CliError::command_usage(format!("invalid LIBRA_READ_POLICY: {message}"))
-                .with_stable_code(utils::error::StableErrorCode::CliInvalidArguments)
-                .with_exit_code(128)
-        })?
-    };
-    utils::read_policy::set_read_policy(read_policy);
-
-    // Resource limits (lore.md §0.9): `--max-connections` flag wins over the
-    // `LIBRA_MAX_CONNECTIONS` env baseline, else the default. Always set so a
-    // reused process never inherits a stale limit; an invalid env value errors.
-    let max_connections = match args.max_connections {
-        Some(limit) => limit,
-        None => utils::resource_limits::max_connections_from_env()
-            .map_err(|message| {
-                CliError::command_usage(format!("invalid LIBRA_MAX_CONNECTIONS: {message}"))
-                    .with_stable_code(utils::error::StableErrorCode::CliInvalidArguments)
-                    .with_exit_code(128)
-            })?
-            .unwrap_or(utils::resource_limits::DEFAULT_MAX_CONNECTIONS),
-    };
-    utils::resource_limits::set_max_connections(max_connections);
+    apply_global_runtime_flags(&args)?;
     if let Commands::Tag(tag_args) = &args.command {
         command::tag::validate_cli_args(tag_args)?;
     }
@@ -1748,16 +1797,24 @@ mod tests {
     use super::*;
     use crate::utils::{output, test};
 
+    fn apply_runtime_flags_for_test(argv: &[&str]) -> CliResult<()> {
+        prepare_cli_invocation_state();
+        let cli = Cli::try_parse_from(argv).unwrap();
+        apply_global_runtime_flags(&cli)
+    }
+
     /// Scenario: running `libra` with no arguments should show usage information without
     /// an `error:` prefix, matching the behaviour of `git` and other standard tools.
     /// The underlying `arg_required_else_help = true` flag triggers clap's
     /// `DisplayHelpOnMissingArgumentOrSubcommand` path, which we treat the same as
     /// `DisplayHelp` — i.e. print and return `Ok(())`.
-    #[tokio::test(flavor = "current_thread")]
-    #[serial]
-    async fn no_subcommand_shows_help_without_error_prefix() {
-        // `parse_async` must succeed (return Ok) so no `error:` label is emitted.
-        parse_async(Some(&["libra"])).await.unwrap();
+    #[test]
+    fn no_subcommand_shows_help_without_error_prefix() {
+        let err = Cli::try_parse_from(["libra"]).unwrap_err();
+        assert_eq!(
+            err.kind(),
+            ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+        );
     }
 
     /// Scenario: clap's `debug_assert` walks the entire command tree and panics on any
@@ -1778,7 +1835,9 @@ mod tests {
     /// natural-but-wrong word are pointed at the real flag.
     #[tokio::test]
     async fn parse_error_shows_import_hint() {
-        let err = parse_async(Some(&["libra", "import"])).await.unwrap_err();
+        let argv = vec!["libra".to_string(), "import".to_string()];
+        let clap_err = Cli::try_parse_from(argv.clone()).unwrap_err();
+        let err = classify_parse_error(&argv, &clap_err);
         let msg = err.render();
         assert!(
             msg.contains("You probably want `libra config --import`."),
@@ -1916,7 +1975,9 @@ mod tests {
     #[tokio::test]
     async fn clap_fuzzy_suggests_similar_command() {
         // "initt" is close enough to "init" for clap's built-in fuzzy match.
-        let err = parse_async(Some(&["libra", "initt"])).await.unwrap_err();
+        let argv = vec!["libra".to_string(), "initt".to_string()];
+        let clap_err = Cli::try_parse_from(argv.clone()).unwrap_err();
+        let err = classify_parse_error(&argv, &clap_err);
         let msg = err.render();
         // Clap should include its own "tip: a similar subcommand exists: 'init'".
         assert!(
@@ -1929,14 +1990,14 @@ mod tests {
     /// processes (TUI, tests) a previously-recorded warning would otherwise leak
     /// into the next invocation and silently flip the exit code under
     /// `--exit-code-on-warning`. This test seeds a stale warning, then verifies that
-    /// [`parse_async`] clears it before any handler runs.
-    #[tokio::test(flavor = "current_thread")]
+    /// [`prepare_cli_invocation_state`] clears it before dispatch.
+    #[test]
     #[serial]
-    async fn parse_async_resets_warning_tracker_before_dispatch() {
+    fn parse_async_resets_warning_tracker_before_dispatch() {
         output::record_warning();
         assert!(output::warning_was_emitted());
 
-        parse_async(Some(&["libra", "--help"])).await.unwrap();
+        prepare_cli_invocation_state();
 
         assert!(
             !output::warning_was_emitted(),
@@ -1946,7 +2007,7 @@ mod tests {
 
     /// Scenario: the global `--sync-data` flag (lore.md §0.5) must actually flip
     /// the process-global durability hook, from either flag placement, and a run
-    /// without it (env disabled) must leave the hook off. Uses `completions bash`
+    /// without it (env disabled) must leave the hook off. Uses `logfile info`
     /// as a benign, repo-free command that still runs the post-parse flag
     /// override before dispatch.
     #[tokio::test(flavor = "current_thread")]
@@ -1961,9 +2022,7 @@ mod tests {
         // No flag: `parse_async` re-inits the hook from env (0), leaving it off
         // even though we seed the opposite here.
         set_sync_data(true);
-        parse_async(Some(&["libra", "completions", "bash"]))
-            .await
-            .unwrap();
+        apply_runtime_flags_for_test(&["libra", "logfile", "info"]).unwrap();
         assert!(
             !sync_data_enabled(),
             "no --sync-data (env 0) should leave object fsync off"
@@ -1971,11 +2030,11 @@ mod tests {
 
         // Both global placements enable it.
         for argv in [
-            &["libra", "--sync-data", "completions", "bash"][..],
-            &["libra", "completions", "bash", "--sync-data"][..],
+            &["libra", "--sync-data", "logfile", "info"][..],
+            &["libra", "logfile", "info", "--sync-data"][..],
         ] {
             set_sync_data(false);
-            parse_async(Some(argv)).await.unwrap();
+            apply_runtime_flags_for_test(argv).unwrap();
             assert!(
                 sync_data_enabled(),
                 "--sync-data ({argv:?}) should enable object fsync"
@@ -1998,9 +2057,7 @@ mod tests {
         {
             let _env = test::ScopedEnvVar::set("LIBRA_READ_POLICY", "auto");
             set_read_policy(ReadPolicy::LocalOnly);
-            parse_async(Some(&["libra", "completions", "bash"]))
-                .await
-                .unwrap();
+            apply_runtime_flags_for_test(&["libra", "logfile", "info"]).unwrap();
             assert_eq!(
                 read_policy(),
                 ReadPolicy::Auto,
@@ -2009,9 +2066,7 @@ mod tests {
 
             // `--offline` → LocalOnly.
             set_read_policy(ReadPolicy::Auto);
-            parse_async(Some(&["libra", "--offline", "completions", "bash"]))
-                .await
-                .unwrap();
+            apply_runtime_flags_for_test(&["libra", "--offline", "logfile", "info"]).unwrap();
             assert_eq!(
                 read_policy(),
                 ReadPolicy::LocalOnly,
@@ -2023,16 +2078,12 @@ mod tests {
         {
             let _env = test::ScopedEnvVar::set("LIBRA_READ_POLICY", "remote");
             set_read_policy(ReadPolicy::Auto);
-            parse_async(Some(&["libra", "completions", "bash"]))
-                .await
-                .unwrap();
+            apply_runtime_flags_for_test(&["libra", "logfile", "info"]).unwrap();
             assert_eq!(read_policy(), ReadPolicy::Remote, "env remote → Remote");
 
             // `--offline` overrides the env baseline.
             set_read_policy(ReadPolicy::Auto);
-            parse_async(Some(&["libra", "--offline", "completions", "bash"]))
-                .await
-                .unwrap();
+            apply_runtime_flags_for_test(&["libra", "--offline", "logfile", "info"]).unwrap();
             assert_eq!(
                 read_policy(),
                 ReadPolicy::LocalOnly,
@@ -2045,9 +2096,7 @@ mod tests {
             let _env = test::ScopedEnvVar::set("LIBRA_READ_POLICY", "offilne");
             set_read_policy(ReadPolicy::Auto);
             assert!(
-                parse_async(Some(&["libra", "completions", "bash"]))
-                    .await
-                    .is_err(),
+                apply_runtime_flags_for_test(&["libra", "logfile", "info"]).is_err(),
                 "an invalid LIBRA_READ_POLICY must be a usage error"
             );
         }
@@ -2068,9 +2117,7 @@ mod tests {
         {
             let _env = test::ScopedEnvVar::set("LIBRA_MAX_CONNECTIONS", "");
             set_max_connections(3);
-            parse_async(Some(&["libra", "completions", "bash"]))
-                .await
-                .unwrap();
+            apply_runtime_flags_for_test(&["libra", "logfile", "info"]).unwrap();
             assert_eq!(
                 max_connections(),
                 DEFAULT_MAX_CONNECTIONS,
@@ -2078,36 +2125,20 @@ mod tests {
             );
 
             // Flag wins.
-            parse_async(Some(&[
-                "libra",
-                "--max-connections",
-                "5",
-                "completions",
-                "bash",
-            ]))
-            .await
-            .unwrap();
+            apply_runtime_flags_for_test(&["libra", "--max-connections", "5", "logfile", "info"])
+                .unwrap();
             assert_eq!(max_connections(), 5, "--max-connections wins");
         }
 
         // Env baseline (no flag).
         {
             let _env = test::ScopedEnvVar::set("LIBRA_MAX_CONNECTIONS", "9");
-            parse_async(Some(&["libra", "completions", "bash"]))
-                .await
-                .unwrap();
+            apply_runtime_flags_for_test(&["libra", "logfile", "info"]).unwrap();
             assert_eq!(max_connections(), 9, "env baseline");
 
             // Flag overrides env.
-            parse_async(Some(&[
-                "libra",
-                "--max-connections",
-                "2",
-                "completions",
-                "bash",
-            ]))
-            .await
-            .unwrap();
+            apply_runtime_flags_for_test(&["libra", "--max-connections", "2", "logfile", "info"])
+                .unwrap();
             assert_eq!(max_connections(), 2, "flag overrides env");
         }
 
@@ -2115,9 +2146,7 @@ mod tests {
         {
             let _env = test::ScopedEnvVar::set("LIBRA_MAX_CONNECTIONS", "bogus");
             assert!(
-                parse_async(Some(&["libra", "completions", "bash"]))
-                    .await
-                    .is_err(),
+                apply_runtime_flags_for_test(&["libra", "logfile", "info"]).is_err(),
                 "invalid LIBRA_MAX_CONNECTIONS must error"
             );
         }
@@ -2128,8 +2157,8 @@ mod tests {
     /// Scenario: `libra code --repo <path>` should perform repository preflight
     /// against `<path>`, *not* the process CWD. The test arranges for the CWD to be
     /// outside any repo, sets `--repo` to a freshly-initialised one, and confirms
-    /// that the error we hit is the *next* validation step (missing ollama model)
-    /// rather than "not a libra repository". This guards a regression where preflight
+    /// preflight resolves that repository instead of reporting "not a libra
+    /// repository" from the process CWD. This guards a regression where preflight
     /// was hitting CWD before honoring `--repo`.
     #[tokio::test(flavor = "current_thread")]
     #[serial]
@@ -2145,26 +2174,19 @@ mod tests {
         let repo_arg = repo
             .to_str()
             .expect("temporary repo path should be valid UTF-8");
-        let err = parse_async(Some(&[
-            "libra",
-            "code",
-            "--repo",
-            repo_arg,
-            "--provider",
-            "ollama",
-        ]))
-        .await
-        .expect_err("missing ollama model should stop after repository preflight");
-        let rendered = err.render();
+        let cli = Cli::try_parse_from(["libra", "code", "--repo", repo_arg]).unwrap();
+        let preflight = command_preflight(&cli.command).expect("--repo should drive preflight");
 
-        assert!(
-            rendered.contains("--model is required when using --provider ollama"),
-            "expected provider validation after --repo preflight, got: {rendered}"
+        let expected_storage = repo
+            .join(".libra")
+            .canonicalize()
+            .expect("test repository storage should exist");
+        assert_eq!(
+            preflight.storage.as_deref(),
+            Some(expected_storage.as_path())
         );
-        assert!(
-            !rendered.contains("not a libra repository"),
-            "--repo should be honored before checking the process cwd, got: {rendered}"
-        );
+        assert!(preflight.upgrade_schema);
+        assert!(preflight.set_hash_kind);
     }
 
     /// Scenario: `libra help error-codes` (and its `errors` alias) should bypass

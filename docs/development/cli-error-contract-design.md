@@ -1,7 +1,7 @@
 # Libra CLI Error Contract Design
 
-This document consolidates the design intent from RFC [#301](https://github.com/web3infra-foundation/libra/issues/301)
-and the initial implementation scope from [#302](https://github.com/web3infra-foundation/libra/issues/302).
+This document consolidates the design intent from RFC [#301](https://github.com/libra-tools/libra/issues/301)
+and the initial implementation scope from [#302](https://github.com/libra-tools/libra/issues/302).
 
 It is a development-facing design note. The user-facing reference remains
 [`docs/error-codes.md`](../error-codes.md).
@@ -331,7 +331,7 @@ These questions do not block the base contract introduced here.
 
 ## Canonical References
 
-- RFC: [#301](https://github.com/web3infra-foundation/libra/issues/301)
-- Initial implementation: [#302](https://github.com/web3infra-foundation/libra/issues/302)
+- RFC: [#301](https://github.com/libra-tools/libra/issues/301)
+- Initial implementation: [#302](https://github.com/libra-tools/libra/issues/302)
 - User-facing error-code reference: [`docs/error-codes.md`](../error-codes.md)
 - Shared implementation entrypoint: [`src/utils/error.rs`](../../src/utils/error.rs)

@@ -440,23 +440,23 @@ mod tests {
 
     #[test]
     fn test_gen_git_lfs_server_url() {
-        const LFS_SERVER_URL: &str = "https://github.com/web3infra-foundation/mega.git/info/lfs";
-        let url = "https://github.com/web3infra-foundation/mega".to_owned();
+        const LFS_SERVER_URL: &str = "https://github.com/libra-tools/mega.git/info/lfs";
+        let url = "https://github.com/libra-tools/mega".to_owned();
         assert_eq!(generate_lfs_server_url(url), LFS_SERVER_URL);
 
-        let url = "https://github.com/web3infra-foundation/mega.git".to_owned();
+        let url = "https://github.com/libra-tools/mega.git".to_owned();
         assert_eq!(generate_lfs_server_url(url), LFS_SERVER_URL);
 
-        let url = "git@github.com:web3infra-foundation/mega.git".to_owned();
+        let url = "git@github.com:libra-tools/mega.git".to_owned();
         assert_eq!(generate_lfs_server_url(url), LFS_SERVER_URL);
 
-        let url = "ssh://github.com/web3infra-foundation/mega.git".to_owned();
+        let url = "ssh://github.com/libra-tools/mega.git".to_owned();
         assert_eq!(generate_lfs_server_url(url), LFS_SERVER_URL);
     }
 
     #[test]
     fn test_gen_mono_lfs_server_url() {
-        const LFS_SERVER_URL: &str = "https://gitmono.com/web3infra-foundation/mega.git/info/lfs";
+        const LFS_SERVER_URL: &str = "https://gitmono.com/libra-tools/mega.git/info/lfs";
         assert_eq!(
             generate_lfs_server_url(LFS_SERVER_URL.to_owned()),
             "https://gitmono.com"

@@ -1117,8 +1117,8 @@ pub async fn get_commit_base(name: &str) -> Result<ObjectHash, String> {
 }
 
 /// Get the repository name from the url
-/// - e.g. `https://github.com/web3infra-foundation/mega.git/` -> mega
-/// - e.g. `https://github.com/web3infra-foundation/mega.git` -> mega
+/// - e.g. `https://github.com/libra-tools/mega.git/` -> mega
+/// - e.g. `https://github.com/libra-tools/mega.git` -> mega
 pub fn get_repo_name_from_url(mut url: &str) -> Option<&str> {
     if url.ends_with('/') {
         url = &url[..url.len() - 1];

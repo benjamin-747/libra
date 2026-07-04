@@ -180,7 +180,7 @@ error_exit() {
         "$C_ACCENT" "$C_RESET" "$C_ACCENT2" "$C_RESET"
     printf '       %s▸%s pin a known-good version         %scurl -fsSL libra.tools/install.sh | sh -s -- -v v0.1.0%s\n' \
         "$C_ACCENT" "$C_RESET" "$C_ACCENT2" "$C_RESET"
-    printf '       %s▸%s open a bug report                %sgithub.com/web3infra-foundation/libra/issues%s\n' \
+    printf '       %s▸%s open a bug report                %sgithub.com/libra-tools/libra/issues%s\n' \
         "$C_ACCENT" "$C_RESET" "$C_ACCENT2" "$C_RESET"
     printf '\n  %sneed the full log? re-run with:%s\n' "$C_DIM" "$C_RESET"
     printf '  %scurl -fsSL libra.tools/install.sh | sh 2>&1 | tee install.log%s\n\n' "$C_TEXT" "$C_RESET"
@@ -346,7 +346,7 @@ verify_checksum() {
     expected=$(awk '{print $1; exit}' "$sum_file" 2>/dev/null)
     if [ -z "$expected" ]; then
         error_exit "checksum file at $sum_url is empty or malformed" "verify" \
-            "the mirror returned an unusable .sha256 — retry, or report at github.com/web3infra-foundation/libra/issues"
+            "the mirror returned an unusable .sha256 — retry, or report at github.com/libra-tools/libra/issues"
     fi
     actual=$(sha256_of "$bin_file")
     if [ -z "$actual" ]; then
@@ -359,7 +359,7 @@ verify_checksum() {
     fi
     if [ "$expected" != "$actual" ]; then
         error_exit "sha256 mismatch (expected $expected, got $actual)" "verify" \
-            "the mirror may be compromised — please report at github.com/web3infra-foundation/libra/issues"
+            "the mirror may be compromised — please report at github.com/libra-tools/libra/issues"
     fi
     fact "checksum" "sha256 ok"
 }
@@ -367,7 +367,7 @@ verify_checksum() {
 fetch_latest_version() {
     # Returns the latest tag, or empty string on failure. Caller decides what
     # to do with empty (fail-fast vs. opt-in fallback) — see main().
-    api_url="https://api.github.com/repos/web3infra-foundation/libra/releases/latest"
+    api_url="https://api.github.com/repos/libra-tools/libra/releases/latest"
     if [ "$DOWNLOADER" = "curl" ]; then
         curl -fsSL --connect-timeout 5 --max-time 10 "$api_url" 2>/dev/null \
             | grep '"tag_name":' | head -n1 \
@@ -424,7 +424,7 @@ detect_existing_install() {
 screen_welcome() {
     banner
     agent_say "Hi — I'm the libra installer. I'll set up the AI-agent-native VCS for you in about 30 seconds. I'll show you what I'm doing at every step."
-    printf '  %sgithub.com/web3infra-foundation/libra%s\n'   "$C_DIM" "$C_RESET"
+    printf '  %sgithub.com/libra-tools/libra%s\n'   "$C_DIM" "$C_RESET"
     printf '  %scurl -fsSL libra.tools/install.sh | sh%s\n\n' "$C_DIM" "$C_RESET"
     [ "$TTY" = "1" ] && sleep 0.5 2>/dev/null || true
 }
@@ -749,7 +749,7 @@ screen_success() {
     section "next"
     printf '  %s📖 docs.libra.tools%s\n'                          "$C_TEXT" "$C_RESET"
     printf '  %s💬 discord.libra.tools%s\n'                       "$C_TEXT" "$C_RESET"
-    printf '  %s⭐ github.com/web3infra-foundation/libra%s\n\n'   "$C_TEXT" "$C_RESET"
+    printf '  %s⭐ github.com/libra-tools/libra%s\n\n'   "$C_TEXT" "$C_RESET"
 }
 
 # ─── main ────────────────────────────────────────────────────────────────────

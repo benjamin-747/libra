@@ -14,7 +14,7 @@
 //!   All `create_*` tools accept optional `actor_kind` (`"human"`, `"agent"`, `"system"`,
 //!   `"mcp_client"`) and `actor_id` parameters to identify the creator. When omitted, the
 //!   actor is derived from the MCP client handshake or defaults to `mcp_client("mcp-user")`.
-//! - Status is event-sourced in git-internal 0.7.0 (`intent_event`, `task_event`, `run_event`).
+//! - Status is event-sourced in git-internal (`intent_event`, `task_event`, `run_event`).
 //!   `list_intents`/`list_tasks`/`list_runs` reconstruct status from latest events.
 //! - To fetch the full JSON payload, read the resource: `libra://object/{object_id}`.
 //!
@@ -2394,7 +2394,7 @@ impl LibraMcpServer {
                 "git_diff" => {
                     if patchset.format() != &DiffFormat::GitDiff {
                         return Err(ErrorData::invalid_params(
-                            "git_diff format is not writable in git-internal 0.7.0 yet",
+                            "git_diff format is not writable in git-internal yet",
                             None,
                         ));
                     }

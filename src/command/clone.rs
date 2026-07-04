@@ -69,7 +69,7 @@ use crate::{
     },
 };
 
-const ISSUE_URL: &str = "https://github.com/web3infra-foundation/libra/issues";
+const ISSUE_URL: &str = "https://github.com/libra-tools/libra/issues";
 const CLOUD_CLONE_TEST_R2_ROOT_ENV: &str = "LIBRA_CLOUD_CLONE_TEST_R2_ROOT";
 const CLOUD_CLONE_D1_API_BASE_URL_ENV: &str = "LIBRA_D1_API_BASE_URL";
 

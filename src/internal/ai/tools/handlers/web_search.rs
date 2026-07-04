@@ -162,7 +162,7 @@ fn ensure_network_allowed(invocation: &ToolInvocation) -> ToolResult<()> {
 fn build_web_search_client() -> ToolResult<reqwest::Client> {
     reqwest::Client::builder()
         .timeout(WEB_SEARCH_TIMEOUT)
-        .user_agent("libra-code/0.1 (+https://github.com/web3infra-foundation/mega)")
+        .user_agent("libra-code/0.1 (+https://github.com/libra-tools/mega)")
         .build()
         .map_err(|error| {
             ToolError::ExecutionFailed(format!("failed to initialize web search client: {error}"))

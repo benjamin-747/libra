@@ -25,7 +25,7 @@ const OPEN_EXAMPLES: &str = "\
 EXAMPLES:
     libra open                                            Open the auto-detected upstream in the browser
     libra open origin                                     Open a specific remote
-    libra open https://github.com/web3infra-foundation/libra    Open a direct URL
+    libra open https://github.com/libra-tools/libra    Open a direct URL
     libra open --json                                     Structured JSON output for agents (no browser)";
 
 #[derive(Parser, Debug)]
@@ -315,20 +315,20 @@ mod tests {
     #[test]
     fn test_transform_url() {
         assert_eq!(
-            transform_url("git@github.com:web3infra-foundation/libra.git"),
-            "https://github.com/web3infra-foundation/libra"
+            transform_url("git@github.com:libra-tools/libra.git"),
+            "https://github.com/libra-tools/libra"
         );
         assert_eq!(
             transform_url("git@gitlab.com:group/project.git"),
             "https://gitlab.com/group/project"
         );
         assert_eq!(
-            transform_url("https://github.com/web3infra-foundation/libra.git"),
-            "https://github.com/web3infra-foundation/libra"
+            transform_url("https://github.com/libra-tools/libra.git"),
+            "https://github.com/libra-tools/libra"
         );
         assert_eq!(
-            transform_url("ssh://git@github.com/web3infra-foundation/libra.git"),
-            "https://github.com/web3infra-foundation/libra"
+            transform_url("ssh://git@github.com/libra-tools/libra.git"),
+            "https://github.com/libra-tools/libra"
         );
         assert_eq!(
             transform_url("ssh://user@host.com:2222/repo.git"),

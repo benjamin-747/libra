@@ -449,7 +449,7 @@ impl ServerHandler for LibraMcpServer {
         .with_protocol_version(ProtocolVersion::V_2024_11_05)
         .with_server_info(Implementation::new("libra", env!("CARGO_PKG_VERSION")))
         .with_instructions(
-            "Libra MCP Server exposes AI workflow objects and event logs (intent/task/run lifecycle events) backed by git-internal 0.7.0.",
+            "Libra MCP Server exposes AI workflow objects and event logs (intent/task/run lifecycle events) backed by git-internal.",
         )
     }
 

@@ -689,7 +689,7 @@ gantt
 - `docs/commands/remote.md`
 - `COMPATIBILITY.md`
 - `docs/development/integration-scenarios.yaml`
-- `docs/development/integration-test-plan.md`
+- `docs/development/integration/integration-test-plan.md`
 
 **验收标准**：
 - [ ] `libra fetch -p` / `--prune` 删除已不存在于远端的 `refs/remotes/<remote>/*`，并记录可审计输出。

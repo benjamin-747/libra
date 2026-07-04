@@ -171,7 +171,7 @@ Claude Code `PostToolUse` hook（`reference/trace-hook.ts:94`）对 `Write` 和 
 
 > 以下结论经对实际代码核验，推翻了若干“听起来很美”的直觉做法。照着直觉做会撞墙。
 
-1. **`git-internal` 是外部 pinned crate**（`Cargo.toml`：`git-internal = "0.7.4"`，无 `[patch]` 覆盖）。改其 `TouchedFile` / `Provenance` **不是 Libra 仓内 PR**，需发上游版本再升级依赖；且二者都带 `#[serde(deny_unknown_fields)]`，加字段对旧版本读者是**前向不兼容**。
+1. **`git-internal` 是外部 pinned crate**（`Cargo.toml`：`git-internal = "0.8.1"`，无 `[patch]` 覆盖）。改其 `TouchedFile` / `Provenance` **不是 Libra 仓内 PR**，需发上游版本再升级依赖；且二者都带 `#[serde(deny_unknown_fields)]`，加字段对旧版本读者是**前向不兼容**。
    → **行区间类型必须在 Libra 仓内自定义，不要动 `git-internal`。**
 2. **Libra 的 `notes` 不是 git 原生 `refs/notes/*` 树**，而是 SQLite 表（`sql/migrations/2026061401_notes.sql`）+ 对象库里的 blob 哈希。它**不随 push/fetch 传输，外部工具发现不了**；`idx_notes_ref` 只建在 `(notes_ref)` 上。
    → 用 notes 做“跨工具可发现的互操作后端”**不成立**；notes 只适合**本地**存储。真正的互操作只能在 **`publish/ai_export` 边界**导出标准 JSON。
@@ -187,7 +187,7 @@ Claude Code `PostToolUse` hook（`reference/trace-hook.ts:94`）对 `Write` 和 
 
 **利好**：
 
-- `content_hash` 别引 murmur3——**`git-internal::IntegrityHash::compute`** 可用 SHA-256 计算字节哈希，序列化为 `integrity:sha256:<hex>`。⚠️ 此 API 在**外部 pinned crate `git-internal 0.7.4`** 内（非 Libra 仓内可 grep 到），是本文档全部锚点中**唯一无法在本仓树内核验**的一条——落地 P0-0/P1-4 前必须先对照已 vendored 的 crate 源确认其确切签名与序列化语义，不要凭本文档直接调用。
+- `content_hash` 别引 murmur3——**`git-internal::IntegrityHash::compute`** 可用 SHA-256 计算字节哈希，序列化为 `integrity:sha256:<hex>`。⚠️ 此 API 在**外部 pinned crate `git-internal 0.8.1`** 内（非 Libra 仓内可 grep 到），是本文档全部锚点中**唯一无法在本仓树内核验**的一条——落地 P0-0/P1-4 前必须先对照已 vendored 的 crate 源确认其确切签名与序列化语义，不要凭本文档直接调用。
 - `model_id` 规范化几乎免费——**`ModelBinding::to_canonical_string()`**（`src/internal/ai/agent/profile/spec.rs:129`）已能产出 `provider/model[@variant]`，且 `AgentRunEvent::Spawned`、`agent_usage_stats`、`UsageContext` 都已把 provider 与 model **拆开存**，只差在序列化边界拼接。
 - **唯一被低估的资产**：`apply_patch` 已经算好行区间。`src/internal/ai/tools/apply_patch/core.rs` 的 `compute_replacements` 产出精确的 `(start_index, old_len, new_lines)`，handler 还建了 `FileDiff` + unified diff，然后**仅用于 TUI 显示就丢弃**。这是全系统唯一对“AI 写了哪些行”有完美、无竞态认知的地方。
 

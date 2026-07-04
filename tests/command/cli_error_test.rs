@@ -33,9 +33,15 @@ fn unknown_command_uses_cli_exit_code_and_json_report() {
     assert_eq!(output.status.code(), Some(129));
 
     let (stderr, report) = parse_cli_error_stderr(&output.stderr);
-    assert_eq!(
-        stderr,
-        "libra: 'wat' is not a libra command. See 'libra --help'.\nError-Code: LBR-CLI-001"
+    assert!(
+        stderr.starts_with(
+            "libra: 'wat' is not a libra command. See 'libra --help'.\nError-Code: LBR-CLI-001"
+        ),
+        "unexpected stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("Hint: a similar subcommand exists:"),
+        "missing similar-command hint: {stderr}"
     );
     assert_eq!(report.error_code, "LBR-CLI-001");
     assert_eq!(report.category, "cli");

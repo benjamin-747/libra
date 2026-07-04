@@ -1,6 +1,6 @@
 # Libra Integration Runner
 
-Independent black-box runner for `docs/development/integration-test-plan.md`.
+Independent black-box runner for `docs/development/integration/integration-test-plan.md`.
 
 This tool is intentionally outside the root `Cargo.toml` test graph. Run it explicitly:
 

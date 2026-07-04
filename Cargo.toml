@@ -1,12 +1,12 @@
 [package]
 name = "libra"
-version = "0.18.0"
+version = "0.18.1"
 edition = "2024"
 license = "MIT"
 description = "AI agent-native version control system with Git on-disk compatibility, SQLite-backed metadata, and tiered cloud storage"
-repository = "https://github.com/web3infra-foundation/libra"
-homepage = "https://github.com/web3infra-foundation/libra"
-authors = ["Web3 Infrastructure Foundation"]
+repository = "https://github.com/libra-tools/libra"
+homepage = "https://github.com/libra-tools/libra"
+authors = ["Libra Tools"]
 keywords = ["git", "version-control", "ai", "agent", "vcs"]
 categories = ["command-line-utilities", "development-tools"]
 readme = "README.md"
@@ -19,13 +19,13 @@ test-live-ai   = []   # L3: tests calling real LLM APIs
 test-live-cloud = []  # L3: tests hitting real D1/R2 endpoints
 test-provider  = []   # deterministic hidden provider for local TUI automation tests
 fastcdc        = []   # lore.md §6: default-OFF FastCDC LFS media chunking client substrate (no new deps; reuses ring sha256; server protocol frozen)
-subagent-scaffold = []  # CEX-S2-10 schema-only scaffold (Step 2 sub-agent contracts; gated on CP-4 in production — see docs/development/commands/agent.md "Step 2 audit closure")
+subagent-scaffold = []  # CEX-S2-10 schema-only scaffold (Step 2 sub-agent contracts; gated on CP-4 in production — see docs/development/tracing/agent.md "Step 2 audit closure")
 otlp = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:tracing-opentelemetry"]  # lore.md 1.7: OTLP trace export (default binary unaffected)
 keyring = ["dep:keyring"]  # lore.md 2.7: OS-keyring auth backend (release builds enable it; default dev builds unaffected)
 
 [dependencies]
 uuid = { version = "1.23.1", features = ["v4", "v5", "v7"] }
-git-internal = "0.7.6"
+git-internal = "0.8.1"
 anyhow = "1.0.102"
 byte-unit = "5.2.0"
 byteorder = "1.5.0"

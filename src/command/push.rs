@@ -54,7 +54,7 @@ use crate::{
     },
 };
 
-const ISSUE_URL: &str = "https://github.com/web3infra-foundation/libra/issues";
+const ISSUE_URL: &str = "https://github.com/libra-tools/libra/issues";
 
 /// Total timeout for push reference discovery and initial connection setup.
 const PUSH_CONNECT_TIMEOUT: Duration = Duration::from_secs(60);

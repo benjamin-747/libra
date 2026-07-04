@@ -229,7 +229,7 @@ const PUBLISH_REDACTION_RULES_VERSION: &str = "2026.05.13-1";
 /// output, but the explicit hint keeps the contract callsite-stable —
 /// mirrors push.rs / tag.rs / commit.rs / stash.rs / index_pack.rs's
 /// hint pattern per Cross-Cutting G.
-const ISSUE_URL: &str = "https://github.com/web3infra-foundation/libra/issues";
+const ISSUE_URL: &str = "https://github.com/libra-tools/libra/issues";
 const PUBLISH_AI_PROJECTION_OBJECT_TYPES: &[&str] = &[
     "Thread",
     "Scheduler",

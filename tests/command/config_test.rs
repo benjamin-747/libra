@@ -4,7 +4,8 @@
 //
 use std::process::Command;
 
-use libra::{CliErrorKind, command::config, exec_async};
+use clap::Parser;
+use libra::{CliErrorKind, CliResult, command::config, utils::output::OutputConfig};
 use serial_test::serial;
 use tempfile::tempdir;
 
@@ -20,6 +21,14 @@ struct EnvVarGuard {
     original: Option<std::ffi::OsString>,
 }
 
+async fn exec_config(args: Vec<&str>) -> CliResult<()> {
+    config::execute_safe(
+        config::ConfigArgs::parse_from(args),
+        &OutputConfig::default(),
+    )
+    .await
+}
+
 #[tokio::test]
 #[serial]
 async fn test_cli_config_global_without_repo() {
@@ -29,10 +38,10 @@ async fn test_cli_config_global_without_repo() {
     let global_db_dir = tempdir().unwrap();
     let _scoped = ScopedConfigPathGuard::new(&global_db_dir.path().join("global_config_cli.db"));
 
-    let result = exec_async(vec!["config", "--global", "user.name", "cli_global_user"]).await;
+    let result = exec_config(vec!["config", "--global", "user.name", "cli_global_user"]).await;
     assert!(result.is_ok());
 
-    let read_result = exec_async(vec!["config", "--global", "--get", "user.name"]).await;
+    let read_result = exec_config(vec!["config", "--global", "--get", "user.name"]).await;
     assert!(read_result.is_ok());
 }
 
@@ -46,7 +55,7 @@ async fn test_cli_config_list_global_without_repo() {
     let _scoped =
         ScopedConfigPathGuard::new(&global_db_dir.path().join("global_config_cli_list.db"));
 
-    let result = exec_async(vec!["config", "--list", "--global"]).await;
+    let result = exec_config(vec!["config", "--list", "--global"]).await;
     assert!(result.is_ok());
 }
 
@@ -67,13 +76,13 @@ async fn test_cli_config_system_read_write() {
     );
 
     // --system writes and reads back (no repository required, like --global).
-    let result = exec_async(vec!["config", "--system", "user.name", "cli_system_user"]).await;
+    let result = exec_config(vec!["config", "--system", "user.name", "cli_system_user"]).await;
     assert!(result.is_ok(), "--system set should succeed: {result:?}");
 
-    let read_result = exec_async(vec!["config", "--system", "--get", "user.name"]).await;
+    let read_result = exec_config(vec!["config", "--system", "--get", "user.name"]).await;
     assert!(read_result.is_ok(), "--system --get should succeed");
 
-    let list_result = exec_async(vec!["config", "--list", "--system"]).await;
+    let list_result = exec_config(vec!["config", "--list", "--system"]).await;
     assert!(list_result.is_ok(), "--system --list should succeed");
 }
 
@@ -147,7 +156,7 @@ async fn test_cli_config_local_requires_repo() {
     let temp_dir = tempdir().unwrap();
     let _guard = test::ChangeDirGuard::new(temp_dir.path());
 
-    let result = exec_async(vec!["config", "--local", "--list"]).await;
+    let result = exec_config(vec!["config", "--local", "--list"]).await;
     let err = result.unwrap_err();
     assert_eq!(err.kind(), CliErrorKind::Fatal);
     assert!(err.message().contains("not a libra repository"));
@@ -250,7 +259,7 @@ async fn test_config_import_global_from_git() {
         .unwrap();
     assert!(set_email.status.success());
 
-    let result = exec_async(vec!["config", "--global", "import"]).await;
+    let result = exec_config(vec!["config", "--global", "import"]).await;
     assert!(result.is_ok());
 
     let imported_name = config::ScopedConfig::get(config::ConfigScope::Global, "user.name")
@@ -295,7 +304,7 @@ async fn test_config_import_local_from_git_repository() {
         .unwrap();
     assert!(set_email.status.success());
 
-    let result = exec_async(vec!["config", "import"]).await;
+    let result = exec_config(vec!["config", "import"]).await;
     assert!(result.is_ok());
 
     let imported_names: Vec<String> =
@@ -369,7 +378,7 @@ async fn test_config_get_failed() {
     let _guard = test::ChangeDirGuard::new(temp_path.path());
 
     // --default with --add (no --get or --get-all) should error
-    let result = exec_async(vec![
+    let result = exec_config(vec![
         "config",
         "--add",
         "-d",
@@ -392,10 +401,10 @@ async fn test_config_get_all() {
     let _guard = test::ChangeDirGuard::new(temp_path.path());
 
     // Add the config first
-    let result = exec_async(vec!["config", "--add", "user.name", "erasernoob"]).await;
+    let result = exec_config(vec!["config", "--add", "user.name", "erasernoob"]).await;
     assert!(result.is_ok());
 
-    let result = exec_async(vec!["config", "--get", "user.name"]).await;
+    let result = exec_config(vec!["config", "--get", "user.name"]).await;
     assert!(result.is_ok());
 }
 
@@ -416,7 +425,7 @@ async fn test_config_get_all_with_default() {
     // set the current working directory to the temporary path
     let _guard = test::ChangeDirGuard::new(temp_path.path());
 
-    let result = exec_async(vec!["config", "--get-all", "-d", "erasernoob", "user.name"]).await;
+    let result = exec_config(vec!["config", "--get-all", "-d", "erasernoob", "user.name"]).await;
     assert!(result.is_ok());
 }
 
@@ -431,10 +440,10 @@ async fn test_config_get() {
     let _guard = test::ChangeDirGuard::new(temp_path.path());
 
     // Add the config first
-    let result = exec_async(vec!["config", "--add", "user.name", "erasernoob"]).await;
+    let result = exec_config(vec!["config", "--add", "user.name", "erasernoob"]).await;
     assert!(result.is_ok());
 
-    let result = exec_async(vec!["config", "--get", "user.name"]).await;
+    let result = exec_config(vec!["config", "--get", "user.name"]).await;
     assert!(result.is_ok());
 }
 
@@ -447,7 +456,7 @@ async fn test_config_get_with_default() {
 
     let _guard = test::ChangeDirGuard::new(temp_path.path());
 
-    let result = exec_async(vec!["config", "--get", "-d", "erasernoob", "user.name"]).await;
+    let result = exec_config(vec!["config", "--get", "-d", "erasernoob", "user.name"]).await;
     assert!(result.is_ok());
 }
 
@@ -462,10 +471,10 @@ async fn test_config_list() {
     let _guard = test::ChangeDirGuard::new(temp_path.path());
 
     // Add the config first
-    let result = exec_async(vec!["config", "--add", "user.name", "erasernoob"]).await;
+    let result = exec_config(vec!["config", "--add", "user.name", "erasernoob"]).await;
     assert!(result.is_ok());
 
-    let result = exec_async(vec![
+    let result = exec_config(vec![
         "config",
         "--add",
         "user.email",
@@ -475,7 +484,7 @@ async fn test_config_list() {
     assert!(result.is_ok());
 
     // List configs
-    let result = exec_async(vec!["config", "--list"]).await;
+    let result = exec_config(vec!["config", "--list"]).await;
     assert!(result.is_ok());
 }
 
@@ -490,10 +499,10 @@ async fn test_config_list_name_only() {
     let _guard = test::ChangeDirGuard::new(temp_path.path());
 
     // Add the config first
-    let result = exec_async(vec!["config", "--add", "user.name", "erasernoob"]).await;
+    let result = exec_config(vec!["config", "--add", "user.name", "erasernoob"]).await;
     assert!(result.is_ok());
 
-    let result = exec_async(vec![
+    let result = exec_config(vec![
         "config",
         "--add",
         "user.email",
@@ -503,7 +512,7 @@ async fn test_config_list_name_only() {
     assert!(result.is_ok());
 
     // List configs with name_only via subcommand
-    let result = exec_async(vec!["config", "list", "--name-only"]).await;
+    let result = exec_config(vec!["config", "list", "--name-only"]).await;
     assert!(result.is_ok());
 }
 
@@ -516,11 +525,11 @@ async fn test_config_scope_local_default() {
     let _guard = test::ChangeDirGuard::new(temp_path.path());
 
     // Test that no scope specified defaults to local
-    let result = exec_async(vec!["config", "user.name", "test_user_local_default"]).await;
+    let result = exec_config(vec!["config", "user.name", "test_user_local_default"]).await;
     assert!(result.is_ok());
 
     // Verify the value was written to local scope by reading it back
-    let result = exec_async(vec!["config", "--get", "user.name"]).await;
+    let result = exec_config(vec!["config", "--get", "user.name"]).await;
     assert!(result.is_ok());
 }
 
@@ -536,7 +545,7 @@ async fn test_config_scope_global() {
     let _scoped = ScopedConfigPathGuard::new(&global_db_dir.path().join("global_config.db"));
 
     // Set a value in global scope
-    let result = exec_async(vec![
+    let result = exec_config(vec![
         "config",
         "--global",
         "user.email",
@@ -546,11 +555,11 @@ async fn test_config_scope_global() {
     assert!(result.is_ok());
 
     // Verify the value was written to global scope by reading it back
-    let result = exec_async(vec!["config", "--global", "--get", "user.email"]).await;
+    let result = exec_config(vec!["config", "--global", "--get", "user.email"]).await;
     assert!(result.is_ok());
 
     // Verify that the global value is NOT accessible from local scope
-    let result = exec_async(vec![
+    let result = exec_config(vec![
         "config",
         "--local",
         "--get",
@@ -577,10 +586,10 @@ async fn test_config_scope_system_errors() {
     );
 
     // Plain `--system` writes succeed, but vault-encrypted secrets are rejected.
-    let ok = exec_async(vec!["config", "--system", "user.name", "system_user"]).await;
+    let ok = exec_config(vec!["config", "--system", "user.name", "system_user"]).await;
     assert!(ok.is_ok(), "--system plain set should succeed: {ok:?}");
 
-    let result = exec_async(vec![
+    let result = exec_config(vec![
         "config",
         "set",
         "--system",
@@ -606,7 +615,7 @@ async fn test_config_scope_system_errors() {
         "Vault.signing",
         "VAULT.gpg.pubkey",
     ] {
-        let r = exec_async(vec!["config", "--system", key, "x"]).await;
+        let r = exec_config(vec!["config", "--system", key, "x"]).await;
         assert!(r.is_err(), "--system {key} should be rejected");
         assert!(
             r.unwrap_err()
@@ -618,7 +627,7 @@ async fn test_config_scope_system_errors() {
 
     // `config import --system` is rejected up front: import auto-encrypts
     // sensitive keys, which the system scope does not support.
-    let import = exec_async(vec!["config", "import", "--system"]).await;
+    let import = exec_config(vec!["config", "import", "--system"]).await;
     assert!(import.is_err(), "config import --system should be rejected");
     assert!(
         import
@@ -643,7 +652,7 @@ async fn test_config_system_rejected_vault_write_does_not_create_db() {
 
     // A rejected `--system --encrypt` write must short-circuit before touching
     // the DB, so the system config path is never created.
-    let result = exec_async(vec![
+    let result = exec_config(vec![
         "config",
         "set",
         "--system",
@@ -675,10 +684,10 @@ async fn test_config_system_rename_into_vault_namespace_rejected() {
     // Seed a plain (non-sensitive) system key, then try to rename its section
     // into the vault namespace — which would smuggle a secret key past the
     // direct-set guard. It must be rejected.
-    let seed = exec_async(vec!["config", "--system", "foo.bar", "value"]).await;
+    let seed = exec_config(vec!["config", "--system", "foo.bar", "value"]).await;
     assert!(seed.is_ok(), "plain system set should succeed: {seed:?}");
 
-    let rename = exec_async(vec![
+    let rename = exec_config(vec![
         "config",
         "--system",
         "--rename-section",
@@ -713,7 +722,7 @@ async fn test_config_system_set_rejected_when_existing_row_is_encrypted() {
     let shared_db = temp_path.path().join("shared.db");
     let _global = EnvVarGuard::set("LIBRA_CONFIG_GLOBAL_DB", shared_db.as_os_str());
 
-    let seed = exec_async(vec![
+    let seed = exec_config(vec![
         "config",
         "set",
         "--global",
@@ -728,7 +737,7 @@ async fn test_config_system_set_rejected_when_existing_row_is_encrypted() {
     // a `--system --plaintext` write to the same key must be rejected (it would
     // otherwise keep the row's encrypted flag while storing a plaintext value).
     let _system = EnvVarGuard::set("LIBRA_CONFIG_SYSTEM_DB", shared_db.as_os_str());
-    let result = exec_async(vec![
+    let result = exec_config(vec![
         "config",
         "set",
         "--system",
@@ -758,7 +767,7 @@ async fn test_config_scope_explicit_local() {
     let _guard = test::ChangeDirGuard::new(temp_path.path());
 
     // Set a value explicitly in local scope
-    let result = exec_async(vec![
+    let result = exec_config(vec![
         "config",
         "--local",
         "user.name",
@@ -768,7 +777,7 @@ async fn test_config_scope_explicit_local() {
     assert!(result.is_ok());
 
     // Verify the value was written to local scope by reading it back
-    let result = exec_async(vec!["config", "--local", "--get", "user.name"]).await;
+    let result = exec_config(vec!["config", "--local", "--get", "user.name"]).await;
     assert!(result.is_ok());
 }
 
@@ -784,19 +793,19 @@ async fn test_config_scope_isolation() {
     let _scoped = ScopedConfigPathGuard::new(&global_db_dir.path().join("global_config.db"));
 
     // Set the same key with different values in different scopes
-    let result = exec_async(vec!["config", "--local", "test.isolation", "local_value"]).await;
+    let result = exec_config(vec!["config", "--local", "test.isolation", "local_value"]).await;
     assert!(result.is_ok());
 
-    let result = exec_async(vec!["config", "--global", "test.isolation", "global_value"]).await;
+    let result = exec_config(vec!["config", "--global", "test.isolation", "global_value"]).await;
     assert!(result.is_ok());
 
     // Verify that each scope returns its own value
     println!("Reading from local scope:");
-    let result = exec_async(vec!["config", "--local", "--get", "test.isolation"]).await;
+    let result = exec_config(vec!["config", "--local", "--get", "test.isolation"]).await;
     assert!(result.is_ok());
 
     println!("Reading from global scope:");
-    let result = exec_async(vec!["config", "--global", "--get", "test.isolation"]).await;
+    let result = exec_config(vec!["config", "--global", "--get", "test.isolation"]).await;
     assert!(result.is_ok());
 }
 
@@ -814,7 +823,7 @@ async fn test_config_get_reveal_decrypt_failure_returns_error() {
         .await
         .unwrap();
 
-    let result = exec_async(vec!["config", "get", "--reveal", "vault.env.TEST_SECRET"]).await;
+    let result = exec_config(vec!["config", "get", "--reveal", "vault.env.TEST_SECRET"]).await;
     let err = result.expect_err("decrypt failure should surface as an error");
     assert_eq!(err.kind(), CliErrorKind::Fatal);
     assert_eq!(err.exit_code(), 128);
@@ -835,7 +844,7 @@ async fn test_config_get_cascaded_global_read_failure_returns_error() {
     std::fs::write(&bad_global_db, "definitely-not-a-sqlite-database").unwrap();
     let _scoped = ScopedConfigPathGuard::new(&bad_global_db);
 
-    let result = exec_async(vec!["config", "get", "user.missing"]).await;
+    let result = exec_config(vec!["config", "get", "user.missing"]).await;
     let err = result.expect_err("broken cascaded scope should not be ignored");
     assert_eq!(err.kind(), CliErrorKind::Fatal);
     assert_eq!(err.exit_code(), 128);
@@ -849,7 +858,7 @@ async fn test_config_add_rejects_implicit_encryption_mixed_with_existing_plainte
     test::setup_with_new_libra_in(temp_path.path()).await;
     let _guard = test::ChangeDirGuard::new(temp_path.path());
 
-    let result = exec_async(vec![
+    let result = exec_config(vec![
         "config",
         "set",
         "--plaintext",
@@ -859,7 +868,7 @@ async fn test_config_add_rejects_implicit_encryption_mixed_with_existing_plainte
     .await;
     assert!(result.is_ok());
 
-    let result = exec_async(vec![
+    let result = exec_config(vec![
         "config",
         "set",
         "--add",
@@ -995,7 +1004,7 @@ async fn test_config_set_read_failure_does_not_silently_skip_existing_state_chec
     let _home_guard = EnvVarGuard::set("HOME", fake_home.path().as_os_str());
     let _userprofile_guard = EnvVarGuard::set("USERPROFILE", fake_home.path().as_os_str());
 
-    let result = exec_async(vec![
+    let result = exec_config(vec![
         "config",
         "set",
         "--global",
@@ -1032,7 +1041,7 @@ async fn test_config_set_missing_value_uses_protected_input_when_existing_key_is
     // Prevent rpassword::read_password() from blocking on stdin.
     let _test_env = EnvVarGuard::set("LIBRA_TEST", std::ffi::OsStr::new("1"));
 
-    let result = exec_async(vec![
+    let result = exec_config(vec![
         "config",
         "set",
         "--encrypt",
@@ -1042,7 +1051,7 @@ async fn test_config_set_missing_value_uses_protected_input_when_existing_key_is
     .await;
     assert!(result.is_ok());
 
-    let result = exec_async(vec!["config", "set", "custom.value"]).await;
+    let result = exec_config(vec!["config", "set", "custom.value"]).await;
     let err = result.expect_err("existing encrypted state should require protected input");
     assert_eq!(err.exit_code(), 2);
     assert!(

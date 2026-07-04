@@ -31,7 +31,7 @@ use crate::{
 };
 
 const DEFAULT_BRANCH: &str = "main";
-const ISSUE_URL: &str = "https://github.com/web3infra-foundation/libra/issues";
+const ISSUE_URL: &str = "https://github.com/libra-tools/libra/issues";
 const EXAMPLES: &str = r#"EXAMPLES:
     libra init                                 Initialize in current directory
     libra init my-project                      Initialize in a new directory

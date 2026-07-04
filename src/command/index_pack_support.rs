@@ -9,7 +9,7 @@ use git_internal::errors::GitError;
 use crate::utils::error::{CliError, CliResult, StableErrorCode};
 
 const INDEX_WRITE_ERROR_PREFIX: &str = "index write failed";
-const ISSUE_URL: &str = "https://github.com/web3infra-foundation/libra/issues";
+const ISSUE_URL: &str = "https://github.com/libra-tools/libra/issues";
 
 pub(crate) fn index_pack_error(err: GitError) -> CliError {
     let stable_code = match err {

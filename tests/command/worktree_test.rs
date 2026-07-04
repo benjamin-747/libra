@@ -6,9 +6,13 @@ use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 
+use clap::Parser;
 use libra::{
-    exec_async,
-    utils::{test, util},
+    command::{
+        commit::{self, CommitArgs},
+        worktree::{self, WorktreeArgs},
+    },
+    utils::{output::OutputConfig, test, util},
 };
 use serde::{Deserialize, Serialize};
 use serial_test::serial;
@@ -90,6 +94,22 @@ fn worktree_paths() -> Vec<String> {
         .into_iter()
         .map(|w| w.path)
         .collect()
+}
+
+async fn exec_worktree(args: &[&str]) -> libra::CliResult<()> {
+    let argv = std::iter::once("worktree")
+        .chain(args.iter().copied())
+        .collect::<Vec<_>>();
+    let parsed = WorktreeArgs::parse_from(argv);
+    worktree::execute_safe(parsed, &OutputConfig::default()).await
+}
+
+async fn exec_commit(args: &[&str]) -> libra::CliResult<()> {
+    let argv = std::iter::once("commit")
+        .chain(args.iter().copied())
+        .collect::<Vec<_>>();
+    let parsed = CommitArgs::parse_from(argv);
+    commit::execute_safe(parsed, &OutputConfig::default()).await
 }
 
 fn assert_worktree_error(output: &std::process::Output, error_code: &str) -> CliErrorReport {
@@ -349,7 +369,7 @@ async fn test_worktree_repair_json_reports_changed_state() {
     test::setup_with_new_libra_in(repo_dir.path()).await;
     let _guard = test::ChangeDirGuard::new(repo_dir.path());
 
-    exec_async(vec!["worktree", "add", "wt_repair_json"])
+    exec_worktree(&["add", "wt_repair_json"])
         .await
         .expect("worktree add should succeed");
 
@@ -435,7 +455,7 @@ async fn test_worktree_lock_json_no_such_worktree_reports_invalid_target() {
     let repo_dir = tempdir().unwrap();
     test::setup_with_new_libra_in(repo_dir.path()).await;
     let _guard = test::ChangeDirGuard::new(repo_dir.path());
-    exec_async(vec!["worktree", "list"])
+    exec_worktree(&["list"])
         .await
         .expect("worktree list should initialize state");
     let before_paths = worktree_paths();
@@ -466,7 +486,7 @@ async fn test_worktree_remove_machine_rejects_main_with_stable_error() {
     let repo_dir = tempdir().unwrap();
     test::setup_with_new_libra_in(repo_dir.path()).await;
     let _guard = test::ChangeDirGuard::new(repo_dir.path());
-    exec_async(vec!["worktree", "list"])
+    exec_worktree(&["list"])
         .await
         .expect("worktree list should initialize state");
     let before_paths = worktree_paths();
@@ -498,10 +518,10 @@ async fn test_worktree_remove_json_rejects_locked_with_stable_error() {
     let repo_dir = tempdir().unwrap();
     test::setup_with_new_libra_in(repo_dir.path()).await;
     let _guard = test::ChangeDirGuard::new(repo_dir.path());
-    exec_async(vec!["worktree", "add", "wt_locked_error"])
+    exec_worktree(&["add", "wt_locked_error"])
         .await
         .expect("worktree add should succeed");
-    exec_async(vec!["worktree", "lock", "wt_locked_error"])
+    exec_worktree(&["lock", "wt_locked_error"])
         .await
         .expect("worktree lock should succeed");
     let wt_path = repo_dir.path().join("wt_locked_error");
@@ -532,7 +552,7 @@ async fn test_worktree_move_machine_destination_exists_reports_conflict() {
     let repo_dir = tempdir().unwrap();
     test::setup_with_new_libra_in(repo_dir.path()).await;
     let _guard = test::ChangeDirGuard::new(repo_dir.path());
-    exec_async(vec!["worktree", "add", "wt_move_error"])
+    exec_worktree(&["add", "wt_move_error"])
         .await
         .expect("worktree add should succeed");
     let src_path = repo_dir.path().join("wt_move_error");
@@ -576,7 +596,7 @@ async fn test_worktree_add_json_rejects_storage_path_as_invalid_target() {
     let repo_dir = tempdir().unwrap();
     test::setup_with_new_libra_in(repo_dir.path()).await;
     let _guard = test::ChangeDirGuard::new(repo_dir.path());
-    exec_async(vec!["worktree", "list"])
+    exec_worktree(&["list"])
         .await
         .expect("worktree list should initialize state");
     let before_paths = worktree_paths();
@@ -613,7 +633,7 @@ async fn test_worktree_list_json_corrupt_state_reports_repo_corrupt() {
     let repo_dir = tempdir().unwrap();
     test::setup_with_new_libra_in(repo_dir.path()).await;
     let _guard = test::ChangeDirGuard::new(repo_dir.path());
-    exec_async(vec!["worktree", "list"])
+    exec_worktree(&["list"])
         .await
         .expect("worktree list should initialize state");
     let state_path = util::storage_path().join("worktrees.json");
@@ -644,7 +664,7 @@ async fn test_worktree_add_creates_linked_directory() {
     test::setup_with_new_libra_in(repo_dir.path()).await;
     let _guard = test::ChangeDirGuard::new(repo_dir.path());
 
-    let result = exec_async(vec!["worktree", "add", "wt1"]).await;
+    let result = exec_worktree(&["add", "wt1"]).await;
     assert!(result.is_ok(), "worktree add failed: {:?}", result.err());
 
     let wt_path = repo_dir.path().join("wt1");
@@ -670,7 +690,7 @@ async fn test_worktree_add_normalizes_missing_parent_with_dotdot() {
     test::setup_with_new_libra_in(repo_dir.path()).await;
     let _guard = test::ChangeDirGuard::new(repo_dir.path());
 
-    exec_async(vec!["worktree", "add", "missing_parent/../wt_norm"])
+    exec_worktree(&["add", "missing_parent/../wt_norm"])
         .await
         .expect("worktree add should succeed");
 
@@ -687,13 +707,13 @@ async fn test_worktree_add_normalizes_missing_parent_with_dotdot() {
         "stored worktree path should be canonical and normalized"
     );
 
-    exec_async(vec!["worktree", "lock", "wt_norm"])
+    exec_worktree(&["lock", "wt_norm"])
         .await
         .expect("worktree lock should succeed");
-    exec_async(vec!["worktree", "unlock", "wt_norm"])
+    exec_worktree(&["unlock", "wt_norm"])
         .await
         .expect("worktree unlock should succeed");
-    exec_async(vec!["worktree", "remove", "wt_norm"])
+    exec_worktree(&["remove", "wt_norm"])
         .await
         .expect("worktree remove should succeed");
 }
@@ -708,19 +728,19 @@ async fn test_worktree_add_parent_relative_then_operate_with_dot_from_linked_wor
     test::setup_with_new_libra_in(&repo_path).await;
 
     let _guard_repo = test::ChangeDirGuard::new(&repo_path);
-    exec_async(vec!["worktree", "add", "../wt_lock_dot"])
+    exec_worktree(&["add", "../wt_lock_dot"])
         .await
         .expect("worktree add with parent-relative path should succeed");
 
     let linked = root_dir.path().join("wt_lock_dot");
     let _guard_linked = test::ChangeDirGuard::new(&linked);
-    exec_async(vec!["worktree", "lock", "."])
+    exec_worktree(&["lock", "."])
         .await
         .expect("worktree lock with '.' should resolve the registered entry");
-    exec_async(vec!["worktree", "unlock", "."])
+    exec_worktree(&["unlock", "."])
         .await
         .expect("worktree unlock with '.' should resolve the registered entry");
-    exec_async(vec!["worktree", "remove", "."])
+    exec_worktree(&["remove", "."])
         .await
         .expect("worktree remove with '.' should resolve the registered entry");
 }
@@ -735,14 +755,14 @@ async fn test_worktree_add_parent_relative_and_absolute_path_are_equivalent() {
     test::setup_with_new_libra_in(&repo_path).await;
     let _guard = test::ChangeDirGuard::new(&repo_path);
 
-    exec_async(vec!["worktree", "add", "../wt_rel_abs"])
+    exec_worktree(&["add", "../wt_rel_abs"])
         .await
         .expect("first worktree add should succeed");
 
     let abs_target = root_dir.path().join("wt_rel_abs").canonicalize().unwrap();
     let abs_target_str = abs_target.to_string_lossy().to_string();
 
-    exec_async(vec!["worktree", "add", abs_target_str.as_str()])
+    exec_worktree(&["add", abs_target_str.as_str()])
         .await
         .expect("second worktree add with absolute path should succeed");
 
@@ -773,7 +793,7 @@ async fn test_worktree_add_symlink_path_is_canonicalized_to_real_path() {
     let symlink_path = repo_path.join("wt_link");
     symlink(&real_target, &symlink_path).expect("failed to create symlink for test");
 
-    exec_async(vec!["worktree", "add", "wt_link"])
+    exec_worktree(&["add", "wt_link"])
         .await
         .expect("worktree add through symlink should succeed");
 
@@ -792,13 +812,13 @@ async fn test_worktree_add_symlink_path_is_canonicalized_to_real_path() {
         "state should store canonical real path instead of symlink path"
     );
 
-    exec_async(vec!["worktree", "lock", "wt_link"])
+    exec_worktree(&["lock", "wt_link"])
         .await
         .expect("lock by symlink path should resolve the registered entry");
-    exec_async(vec!["worktree", "unlock", "wt_link"])
+    exec_worktree(&["unlock", "wt_link"])
         .await
         .expect("unlock by symlink path should resolve the registered entry");
-    exec_async(vec!["worktree", "remove", "wt_link"])
+    exec_worktree(&["remove", "wt_link"])
         .await
         .expect("remove by symlink path should resolve the registered entry");
 }
@@ -824,10 +844,10 @@ async fn test_worktree_add_symlink_and_real_path_are_deduplicated() {
     let via_symlink_str = via_symlink.to_string_lossy().to_string();
     let via_real_str = via_real.to_string_lossy().to_string();
 
-    exec_async(vec!["worktree", "add", via_symlink_str.as_str()])
+    exec_worktree(&["add", via_symlink_str.as_str()])
         .await
         .expect("add via symlinked parent should succeed");
-    exec_async(vec!["worktree", "add", via_real_str.as_str()])
+    exec_worktree(&["add", via_real_str.as_str()])
         .await
         .expect("add via real parent should not fail");
 
@@ -868,7 +888,7 @@ async fn test_worktree_add_rejects_existing_non_empty_directory() {
         ignore_missing: false,
     })
     .await;
-    exec_async(vec!["commit", "-m", "initial"])
+    exec_commit(&["-m", "initial"])
         .await
         .expect("initial commit should succeed");
 
@@ -878,9 +898,7 @@ async fn test_worktree_add_rejects_existing_non_empty_directory() {
         .expect("failed to seed pre-existing target content");
 
     assert!(
-        exec_async(vec!["worktree", "add", "wt_non_empty"])
-            .await
-            .is_err(),
+        exec_worktree(&["add", "wt_non_empty"]).await.is_err(),
         "adding worktree to non-empty directory should fail"
     );
 
@@ -913,7 +931,7 @@ async fn test_worktree_add_duplicate_registered_path_does_not_create_directory()
     test::setup_with_new_libra_in(repo_dir.path()).await;
     let _guard = test::ChangeDirGuard::new(repo_dir.path());
 
-    exec_async(vec!["worktree", "add", "wt_dup"])
+    exec_worktree(&["add", "wt_dup"])
         .await
         .expect("initial worktree add should succeed");
 
@@ -924,7 +942,7 @@ async fn test_worktree_add_duplicate_registered_path_does_not_create_directory()
     assert!(!wt_path.exists(), "worktree directory should be missing");
 
     let before_paths = worktree_paths();
-    exec_async(vec!["worktree", "add", "wt_dup"])
+    exec_worktree(&["add", "wt_dup"])
         .await
         .expect("duplicate worktree add command itself should not fail");
     let after_paths = worktree_paths();
@@ -964,7 +982,7 @@ async fn test_worktree_add_rolls_back_link_on_restore_failure() {
         ignore_missing: false,
     })
     .await;
-    exec_async(vec!["commit", "-m", "initial"])
+    exec_commit(&["-m", "initial"])
         .await
         .expect("initial commit should succeed");
 
@@ -974,9 +992,7 @@ async fn test_worktree_add_rolls_back_link_on_restore_failure() {
         .expect("failed to create conflicting path in target");
 
     assert!(
-        exec_async(vec!["worktree", "add", "wt_restore_fail"])
-            .await
-            .is_err(),
+        exec_worktree(&["add", "wt_restore_fail"]).await.is_err(),
         "adding worktree with conflicting file should fail"
     );
 
@@ -1031,14 +1047,14 @@ async fn test_worktree_add_rolls_back_populated_files_when_state_save_fails() {
         ignore_missing: false,
     })
     .await;
-    exec_async(vec!["commit", "-m", "initial"])
+    exec_commit(&["-m", "initial"])
         .await
         .expect("initial commit should succeed");
 
     let wt_path = repo_dir.path().join("wt_state_save_fail");
     fs::create_dir_all(&wt_path).expect("failed to create existing empty target");
 
-    exec_async(vec!["worktree", "list"])
+    exec_worktree(&["list"])
         .await
         .expect("worktree list should initialize worktree state");
     assert!(
@@ -1059,9 +1075,7 @@ async fn test_worktree_add_rolls_back_populated_files_when_state_save_fails() {
         .expect("failed to set storage directory read-only");
 
     assert!(
-        exec_async(vec!["worktree", "add", "wt_state_save_fail"])
-            .await
-            .is_err(),
+        exec_worktree(&["add", "wt_state_save_fail"]).await.is_err(),
         "adding worktree with unwritable state should fail"
     );
 
@@ -1103,7 +1117,7 @@ async fn test_worktree_move_across_filesystems_rolls_back_when_supported() {
     test::setup_with_new_libra_in(repo_dir.path()).await;
     let _guard = test::ChangeDirGuard::new(repo_dir.path());
 
-    exec_async(vec!["worktree", "add", "wt_cross_src"])
+    exec_worktree(&["add", "wt_cross_src"])
         .await
         .expect("worktree add should succeed");
     let src_path = repo_dir.path().join("wt_cross_src");
@@ -1124,7 +1138,7 @@ async fn test_worktree_move_across_filesystems_rolls_back_when_supported() {
     let dest_str = dest_path.to_string_lossy().to_string();
     let before_paths = worktree_paths();
 
-    exec_async(vec!["worktree", "move", "wt_cross_src", dest_str.as_str()])
+    exec_worktree(&["move", "wt_cross_src", dest_str.as_str()])
         .await
         .expect("worktree move command itself should not fail");
 
@@ -1151,7 +1165,7 @@ async fn test_worktree_corrupted_state_file_is_handled_without_side_effects() {
     test::setup_with_new_libra_in(repo_dir.path()).await;
     let _guard = test::ChangeDirGuard::new(repo_dir.path());
 
-    exec_async(vec!["worktree", "list"])
+    exec_worktree(&["list"])
         .await
         .expect("worktree list should initialize state first");
 
@@ -1160,7 +1174,7 @@ async fn test_worktree_corrupted_state_file_is_handled_without_side_effects() {
     let before = fs::read_to_string(&state_path).unwrap();
 
     assert!(
-        exec_async(vec!["worktree", "list"]).await.is_err(),
+        exec_worktree(&["list"]).await.is_err(),
         "listing worktrees with corrupt state should fail"
     );
 
@@ -1173,9 +1187,7 @@ async fn test_worktree_corrupted_state_file_is_handled_without_side_effects() {
     let new_path = repo_dir.path().join("wt_from_corrupt");
     assert!(!new_path.exists());
     assert!(
-        exec_async(vec!["worktree", "add", "wt_from_corrupt"])
-            .await
-            .is_err(),
+        exec_worktree(&["add", "wt_from_corrupt"]).await.is_err(),
         "adding worktree with corrupt state should fail"
     );
     assert!(
@@ -1192,19 +1204,19 @@ async fn test_worktree_lock_unlock_and_remove() {
     test::setup_with_new_libra_in(repo_dir.path()).await;
     let _guard = test::ChangeDirGuard::new(repo_dir.path());
 
-    exec_async(vec!["worktree", "add", "wt2"])
+    exec_worktree(&["add", "wt2"])
         .await
         .expect("worktree add should succeed");
 
-    exec_async(vec!["worktree", "lock", "wt2"])
+    exec_worktree(&["lock", "wt2"])
         .await
         .expect("worktree lock should succeed");
 
-    exec_async(vec!["worktree", "unlock", "wt2"])
+    exec_worktree(&["unlock", "wt2"])
         .await
         .expect("worktree unlock should succeed");
 
-    exec_async(vec!["worktree", "remove", "wt2"])
+    exec_worktree(&["remove", "wt2"])
         .await
         .expect("worktree remove should succeed");
 }
@@ -1235,7 +1247,7 @@ async fn test_worktree_add_does_not_reset_index() {
     })
     .await;
 
-    exec_async(vec!["commit", "-m", "initial"])
+    exec_commit(&["-m", "initial"])
         .await
         .expect("initial commit should succeed");
 
@@ -1266,7 +1278,7 @@ async fn test_worktree_add_does_not_reset_index() {
         "tracked.txt should be staged before worktree add"
     );
 
-    exec_async(vec!["worktree", "add", "wt_index"])
+    exec_worktree(&["add", "wt_index"])
         .await
         .expect("worktree add should succeed even when index has staged changes");
 
@@ -1305,7 +1317,7 @@ async fn test_worktree_add_populates_from_head_not_staged_index() {
         ignore_missing: false,
     })
     .await;
-    exec_async(vec!["commit", "-m", "initial"])
+    exec_commit(&["-m", "initial"])
         .await
         .expect("initial commit should succeed");
 
@@ -1327,7 +1339,7 @@ async fn test_worktree_add_populates_from_head_not_staged_index() {
     })
     .await;
 
-    exec_async(vec!["worktree", "add", "wt_head_content"])
+    exec_worktree(&["add", "wt_head_content"])
         .await
         .expect("worktree add should succeed");
 
@@ -1347,7 +1359,7 @@ async fn test_worktree_list_includes_main_and_added_worktrees() {
     test::setup_with_new_libra_in(repo_dir.path()).await;
     let _guard = test::ChangeDirGuard::new(repo_dir.path());
 
-    exec_async(vec!["worktree", "add", "wt_list"])
+    exec_worktree(&["add", "wt_list"])
         .await
         .expect("worktree add should succeed");
 
@@ -1357,7 +1369,7 @@ async fn test_worktree_list_includes_main_and_added_worktrees() {
         "state should contain the added worktree"
     );
 
-    exec_async(vec!["worktree", "list"])
+    exec_worktree(&["list"])
         .await
         .expect("worktree list should succeed");
 
@@ -1379,7 +1391,7 @@ async fn test_worktree_move_moves_unlocked_non_main_worktree() {
 
     let src = repo_dir.path().join("wt_move_src");
     let dest = repo_dir.path().join("wt_move_dest");
-    exec_async(vec!["worktree", "add", "wt_move_src"])
+    exec_worktree(&["add", "wt_move_src"])
         .await
         .expect("worktree add should succeed");
 
@@ -1391,7 +1403,7 @@ async fn test_worktree_move_moves_unlocked_non_main_worktree() {
 
     let src_canonical = src.canonicalize().unwrap();
 
-    exec_async(vec!["worktree", "move", "wt_move_src", "wt_move_dest"])
+    exec_worktree(&["move", "wt_move_src", "wt_move_dest"])
         .await
         .expect("worktree move should succeed");
 
@@ -1422,7 +1434,7 @@ async fn test_worktree_move_main_is_rejected_without_side_effects() {
     test::setup_with_new_libra_in(repo_dir.path()).await;
     let _guard = test::ChangeDirGuard::new(repo_dir.path());
 
-    exec_async(vec!["worktree", "list"])
+    exec_worktree(&["list"])
         .await
         .expect("worktree list should initialize worktree state");
 
@@ -1439,9 +1451,7 @@ async fn test_worktree_move_main_is_rejected_without_side_effects() {
     assert!(!dest.exists());
 
     assert!(
-        exec_async(vec!["worktree", "move", ".", "moved_main"])
-            .await
-            .is_err(),
+        exec_worktree(&["move", ".", "moved_main"]).await.is_err(),
         "moving main worktree should fail"
     );
 
@@ -1475,11 +1485,11 @@ async fn test_worktree_move_locked_is_rejected_without_side_effects() {
 
     let src = repo_dir.path().join("wt_locked");
     let dest = repo_dir.path().join("wt_locked_moved");
-    exec_async(vec!["worktree", "add", "wt_locked"])
+    exec_worktree(&["add", "wt_locked"])
         .await
         .expect("worktree add should succeed");
 
-    exec_async(vec!["worktree", "lock", "wt_locked"])
+    exec_worktree(&["lock", "wt_locked"])
         .await
         .expect("worktree lock should succeed");
 
@@ -1489,7 +1499,7 @@ async fn test_worktree_move_locked_is_rejected_without_side_effects() {
     let src_canonical = src.canonicalize().unwrap();
 
     assert!(
-        exec_async(vec!["worktree", "move", "wt_locked", "wt_locked_moved"])
+        exec_worktree(&["move", "wt_locked", "wt_locked_moved"])
             .await
             .is_err(),
         "moving locked worktree should fail"
@@ -1521,10 +1531,10 @@ async fn test_worktree_move_rejects_duplicate_destination() {
     test::setup_with_new_libra_in(repo_dir.path()).await;
     let _guard = test::ChangeDirGuard::new(repo_dir.path());
 
-    exec_async(vec!["worktree", "add", "wt_a"])
+    exec_worktree(&["add", "wt_a"])
         .await
         .expect("first worktree add should succeed");
-    exec_async(vec!["worktree", "add", "wt_b"])
+    exec_worktree(&["add", "wt_b"])
         .await
         .expect("second worktree add should succeed");
 
@@ -1536,9 +1546,7 @@ async fn test_worktree_move_rejects_duplicate_destination() {
     let before_paths = worktree_paths();
 
     assert!(
-        exec_async(vec!["worktree", "move", "wt_a", "wt_b"])
-            .await
-            .is_err(),
+        exec_worktree(&["move", "wt_a", "wt_b"]).await.is_err(),
         "moving worktree to occupied path should fail"
     );
 
@@ -1564,7 +1572,7 @@ async fn test_worktree_move_rejects_destination_inside_storage() {
     test::setup_with_new_libra_in(repo_dir.path()).await;
     let _guard = test::ChangeDirGuard::new(repo_dir.path());
 
-    exec_async(vec!["worktree", "add", "wt_storage_src"])
+    exec_worktree(&["add", "wt_storage_src"])
         .await
         .expect("worktree add should succeed");
 
@@ -1576,14 +1584,9 @@ async fn test_worktree_move_rejects_destination_inside_storage() {
     let before_paths = worktree_paths();
 
     assert!(
-        exec_async(vec![
-            "worktree",
-            "move",
-            "wt_storage_src",
-            ".libra/moved_inside_storage",
-        ])
-        .await
-        .is_err(),
+        exec_worktree(&["move", "wt_storage_src", ".libra/moved_inside_storage",])
+            .await
+            .is_err(),
         "moving worktree into storage should fail"
     );
 
@@ -1611,7 +1614,7 @@ async fn test_worktree_prune_removes_missing_non_main_worktrees() {
     test::setup_with_new_libra_in(repo_dir.path()).await;
     let _guard = test::ChangeDirGuard::new(repo_dir.path());
 
-    exec_async(vec!["worktree", "add", "wt_prune"])
+    exec_worktree(&["add", "wt_prune"])
         .await
         .expect("worktree add should succeed");
 
@@ -1626,7 +1629,7 @@ async fn test_worktree_prune_removes_missing_non_main_worktrees() {
 
     let before_paths = worktree_paths();
 
-    exec_async(vec!["worktree", "prune"])
+    exec_worktree(&["prune"])
         .await
         .expect("worktree prune should succeed");
 
@@ -1645,10 +1648,10 @@ async fn test_worktree_prune_keeps_locked_worktrees() {
     test::setup_with_new_libra_in(repo_dir.path()).await;
     let _guard = test::ChangeDirGuard::new(repo_dir.path());
 
-    exec_async(vec!["worktree", "add", "wt_locked_prune"])
+    exec_worktree(&["add", "wt_locked_prune"])
         .await
         .expect("worktree add should succeed");
-    exec_async(vec!["worktree", "lock", "wt_locked_prune"])
+    exec_worktree(&["lock", "wt_locked_prune"])
         .await
         .expect("worktree lock should succeed");
 
@@ -1660,7 +1663,7 @@ async fn test_worktree_prune_keeps_locked_worktrees() {
         .to_string();
     fs::remove_dir_all(&wt_path).expect("failed to remove locked worktree directory");
 
-    exec_async(vec!["worktree", "prune"])
+    exec_worktree(&["prune"])
         .await
         .expect("worktree prune should succeed");
 
@@ -1681,10 +1684,10 @@ async fn test_worktree_remove_locked_is_rejected_without_side_effects() {
     test::setup_with_new_libra_in(repo_dir.path()).await;
     let _guard = test::ChangeDirGuard::new(repo_dir.path());
 
-    exec_async(vec!["worktree", "add", "wt_for_remove"])
+    exec_worktree(&["add", "wt_for_remove"])
         .await
         .expect("worktree add should succeed");
-    exec_async(vec!["worktree", "lock", "wt_for_remove"])
+    exec_worktree(&["lock", "wt_for_remove"])
         .await
         .expect("worktree lock should succeed");
 
@@ -1694,9 +1697,7 @@ async fn test_worktree_remove_locked_is_rejected_without_side_effects() {
     let before_paths = worktree_paths();
 
     assert!(
-        exec_async(vec!["worktree", "remove", "wt_for_remove"])
-            .await
-            .is_err(),
+        exec_worktree(&["remove", "wt_for_remove"]).await.is_err(),
         "removing locked worktree should fail"
     );
 
@@ -1721,7 +1722,7 @@ async fn test_worktree_repair_deduplicates_entries() {
     test::setup_with_new_libra_in(repo_dir.path()).await;
     let _guard = test::ChangeDirGuard::new(repo_dir.path());
 
-    exec_async(vec!["worktree", "add", "wt_repair"])
+    exec_worktree(&["add", "wt_repair"])
         .await
         .expect("worktree add should succeed");
 
@@ -1739,7 +1740,7 @@ async fn test_worktree_repair_deduplicates_entries() {
         .expect("failed to serialize duplicated worktree state");
     fs::write(&state_path, data).expect("failed to overwrite worktrees.json with duplicates");
 
-    exec_async(vec!["worktree", "repair"])
+    exec_worktree(&["repair"])
         .await
         .expect("worktree repair should succeed");
 
@@ -1764,7 +1765,7 @@ async fn test_worktree_repair_persists_main_flag_fix_without_duplicates() {
     test::setup_with_new_libra_in(repo_dir.path()).await;
     let _guard = test::ChangeDirGuard::new(repo_dir.path());
 
-    exec_async(vec!["worktree", "add", "wt_main_fix"])
+    exec_worktree(&["add", "wt_main_fix"])
         .await
         .expect("worktree add should succeed");
 
@@ -1778,7 +1779,7 @@ async fn test_worktree_repair_persists_main_flag_fix_without_duplicates() {
         .expect("failed to serialize worktree state with broken main flags");
     fs::write(&state_path, data).expect("failed to overwrite worktrees.json");
 
-    exec_async(vec!["worktree", "repair"])
+    exec_worktree(&["repair"])
         .await
         .expect("worktree repair should succeed");
 
@@ -1804,7 +1805,7 @@ async fn test_worktree_main_flag_remains_single_and_stable() {
     test::setup_with_new_libra_in(repo_dir.path()).await;
 
     let _guard = test::ChangeDirGuard::new(repo_dir.path());
-    exec_async(vec!["worktree", "add", "wt_main"])
+    exec_worktree(&["add", "wt_main"])
         .await
         .expect("worktree add should succeed");
 
@@ -1812,7 +1813,7 @@ async fn test_worktree_main_flag_remains_single_and_stable() {
 
     let wt_path = repo_dir.path().join("wt_main");
     let _guard_wt = test::ChangeDirGuard::new(&wt_path);
-    exec_async(vec!["worktree", "list"])
+    exec_worktree(&["list"])
         .await
         .expect("worktree list from linked worktree should succeed");
 
@@ -1840,14 +1841,14 @@ async fn test_worktree_remove_default_keeps_disk_directory() {
     test::setup_with_new_libra_in(repo_dir.path()).await;
     let _guard = test::ChangeDirGuard::new(repo_dir.path());
 
-    exec_async(vec!["worktree", "add", "wt_keep"])
+    exec_worktree(&["add", "wt_keep"])
         .await
         .expect("worktree add should succeed");
 
     let wt_path = repo_dir.path().join("wt_keep");
     assert!(wt_path.is_dir());
 
-    exec_async(vec!["worktree", "remove", "wt_keep"])
+    exec_worktree(&["remove", "wt_keep"])
         .await
         .expect("worktree remove (default) should succeed");
 
@@ -1870,7 +1871,7 @@ async fn test_worktree_remove_json_reports_kept_directory() {
     test::setup_with_new_libra_in(repo_dir.path()).await;
     let _guard = test::ChangeDirGuard::new(repo_dir.path());
 
-    exec_async(vec!["worktree", "add", "wt_keep_json"])
+    exec_worktree(&["add", "wt_keep_json"])
         .await
         .expect("worktree add should succeed");
 
@@ -1910,14 +1911,14 @@ async fn test_worktree_remove_with_delete_dir_clean_path() {
     test::setup_with_new_libra_in(repo_dir.path()).await;
     let _guard = test::ChangeDirGuard::new(repo_dir.path());
 
-    exec_async(vec!["worktree", "add", "wt_delete"])
+    exec_worktree(&["add", "wt_delete"])
         .await
         .expect("worktree add should succeed");
 
     let wt_path = repo_dir.path().join("wt_delete");
     assert!(wt_path.is_dir());
 
-    exec_async(vec!["worktree", "remove", "--delete-dir", "wt_delete"])
+    exec_worktree(&["remove", "--delete-dir", "wt_delete"])
         .await
         .expect("worktree remove --delete-dir on a clean worktree should succeed");
 
@@ -1940,7 +1941,7 @@ async fn test_worktree_remove_machine_reports_deleted_directory() {
     test::setup_with_new_libra_in(repo_dir.path()).await;
     let _guard = test::ChangeDirGuard::new(repo_dir.path());
 
-    exec_async(vec!["worktree", "add", "wt_delete_machine"])
+    exec_worktree(&["add", "wt_delete_machine"])
         .await
         .expect("worktree add should succeed");
 
@@ -1989,7 +1990,7 @@ async fn test_worktree_remove_with_delete_dir_dirty_path_is_rejected() {
     test::setup_with_new_libra_in(repo_dir.path()).await;
     let _guard = test::ChangeDirGuard::new(repo_dir.path());
 
-    exec_async(vec!["worktree", "add", "wt_dirty_delete"])
+    exec_worktree(&["add", "wt_dirty_delete"])
         .await
         .expect("worktree add should succeed");
 

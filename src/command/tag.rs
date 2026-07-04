@@ -20,7 +20,7 @@ use crate::{
 /// GitHub Issues URL shown on the `SerializeAnnotatedTag` internal-invariant
 /// error path so users can report the bug; mirrors `push.rs`'s
 /// `ObjectCollection` / `PackEncoding` hint pattern.
-const ISSUE_URL: &str = "https://github.com/web3infra-foundation/libra/issues";
+const ISSUE_URL: &str = "https://github.com/libra-tools/libra/issues";
 
 const TAG_EXAMPLES: &str = "\
 EXAMPLES:
@@ -1211,9 +1211,11 @@ mod tests {
 
     use super::*;
     use crate::{
-        cli::parse_async,
-        command::init::{self, InitArgs},
-        internal::tag,
+        command::{
+            add, commit,
+            init::{self, InitArgs},
+        },
+        internal::{config::ConfigKv, tag},
         utils::test::ChangeDirGuard,
     };
 
@@ -1234,28 +1236,24 @@ mod tests {
         })
         .await
         .unwrap();
-        parse_async(Some(&["libra", "config", "user.name", "Tag Test User"]))
+        ConfigKv::set("user.name", "Tag Test User", false)
             .await
             .unwrap();
-        parse_async(Some(&[
-            "libra",
-            "config",
-            "user.email",
-            "tag-test@example.com",
-        ]))
-        .await
-        .unwrap();
+        ConfigKv::set("user.email", "tag-test@example.com", false)
+            .await
+            .unwrap();
         fs::write("test.txt", "hello").unwrap();
-        parse_async(Some(&["libra", "add", "test.txt"]))
+        let quiet_output = OutputConfig {
+            quiet: true,
+            ..OutputConfig::default()
+        };
+        add::execute_safe(add::AddArgs::parse_from(["add", "test.txt"]), &quiet_output)
             .await
             .unwrap();
-        parse_async(Some(&[
-            "libra",
-            "commit",
-            "--no-verify",
-            "-m",
-            "Initial commit",
-        ]))
+        commit::execute_safe(
+            commit::CommitArgs::parse_from(["commit", "--no-verify", "-m", "Initial commit"]),
+            &quiet_output,
+        )
         .await
         .unwrap();
         (temp_dir, guard)

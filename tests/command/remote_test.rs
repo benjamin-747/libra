@@ -1074,7 +1074,9 @@ async fn test_remote_prune_removes_stale_branches() {
         .unwrap();
 
     // Fetch all branches to create remote-tracking branches
-    fetch::fetch_repository(
+    let quiet_output = OutputConfig::resolve(None, false, true, "auto", true, false, "none");
+
+    fetch::fetch_repository_safe(
         RemoteConfig {
             name: "origin".to_string(),
             url: remote_path.clone(),
@@ -1082,8 +1084,11 @@ async fn test_remote_prune_removes_stale_branches() {
         None,
         false,
         None,
+        None,
+        &quiet_output,
     )
-    .await;
+    .await
+    .expect("initial remote update fixture fetch should succeed");
 
     // Verify all remote-tracking branches exist
     for branch_name in &branches_to_create {
@@ -1268,8 +1273,9 @@ async fn test_remote_prune_dry_run_previews_changes() {
         .await
         .unwrap();
 
-    // Fetch to create remote-tracking branch
-    fetch::fetch_repository(
+    // Fetch to create remote-tracking branch.
+    let quiet_output = OutputConfig::resolve(None, false, true, "auto", true, false, "none");
+    fetch::fetch_repository_safe(
         RemoteConfig {
             name: "origin".to_string(),
             url: remote_path.clone(),
@@ -1277,8 +1283,11 @@ async fn test_remote_prune_dry_run_previews_changes() {
         None,
         false,
         None,
+        None,
+        &quiet_output,
     )
-    .await;
+    .await
+    .expect("initial prune fixture fetch should succeed");
 
     // Verify remote-tracking branch exists
     let tracked_branch = format!("refs/remotes/origin/{}", branch_name);
@@ -2557,7 +2566,8 @@ async fn remote_update_prune_removes_stale_tracking_branches() {
     .await
     .unwrap();
 
-    fetch::fetch_repository(
+    let quiet_output = OutputConfig::resolve(None, false, true, "auto", true, false, "none");
+    fetch::fetch_repository_safe(
         RemoteConfig {
             name: "origin".to_string(),
             url: remote_path.clone(),
@@ -2565,8 +2575,11 @@ async fn remote_update_prune_removes_stale_tracking_branches() {
         None,
         false,
         None,
+        None,
+        &quiet_output,
     )
-    .await;
+    .await
+    .expect("initial remote update fixture fetch should succeed");
 
     for b in &branches {
         assert!(
@@ -2588,11 +2601,15 @@ async fn remote_update_prune_removes_stale_tracking_branches() {
 
     // `remote update -p`: fetch then prune. Drives the full Update { prune }
     // path, not the standalone `prune` subcommand.
-    remote::execute(RemoteCmds::Update {
-        groups: vec![],
-        prune: true,
-    })
-    .await;
+    remote::execute_safe(
+        RemoteCmds::Update {
+            groups: vec![],
+            prune: true,
+        },
+        &quiet_output,
+    )
+    .await
+    .expect("remote update -p should fetch and prune");
 
     for b in ["feature1", "feature3"] {
         assert!(

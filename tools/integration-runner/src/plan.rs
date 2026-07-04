@@ -98,7 +98,7 @@ fn load_scenario_docs(repo_root: &Path) -> Result<(BTreeSet<String>, BTreeSet<St
 
 pub(crate) fn check_plan(repo_root: &Path) -> Result<()> {
     let manifest = load_manifest(repo_root)?;
-    let plan_path = repo_root.join("docs/development/integration-test-plan.md");
+    let plan_path = repo_root.join("docs/development/integration/integration-test-plan.md");
     let plan_md =
         fs::read_to_string(&plan_path).with_context(|| format!("read {}", plan_path.display()))?;
     let (md_headings, md_scenarios) = load_scenario_docs(repo_root)?;

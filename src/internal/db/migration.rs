@@ -607,7 +607,7 @@ pub fn builtin_migrations() -> Vec<Migration> {
         // Phase 4 completion: the formal final `Decision` artifact table,
         // closing the ValidationReport -> RiskScoreBreakdown ->
         // DecisionProposal -> Decision chain. Mirrors `ai_decision_proposal`
-        // (per-thread latest pointer). See docs/development/commands/agent.md
+        // (per-thread latest pointer). See docs/development/tracing/agent.md
         // Implementation Phase 4.
         sql_migration(
             2026053101,
@@ -648,7 +648,7 @@ pub fn builtin_migrations() -> Vec<Migration> {
         // created before the rename keep their captured checkpoint history under
         // the new name. Conflict-safe + idempotent — see
         // `src/internal/branch.rs` (`TRACES_BRANCH` / `LEGACY_TRACES_BRANCH`)
-        // and docs/development/commands/agent.md.
+        // and docs/development/tracing/agent.md.
         sql_migration(
             2026062301,
             "rename_agent_traces_branch",

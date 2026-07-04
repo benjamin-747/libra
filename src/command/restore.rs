@@ -11,7 +11,12 @@ use git_internal::{
     hash::ObjectHash,
     internal::{
         index::{Index, IndexEntry},
-        object::{blob::Blob, commit::Commit, tree::Tree, types::ObjectType},
+        object::{
+            blob::Blob,
+            commit::Commit,
+            tree::{Tree, TreeItemMode},
+            types::ObjectType,
+        },
     },
 };
 use serde::Serialize;
@@ -189,6 +194,24 @@ pub struct RestoreOutput {
     pub staged: bool,
     pub restored_files: Vec<String>,
     pub deleted_files: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RestoreTarget {
+    hash: ObjectHash,
+    mode: Option<TreeItemMode>,
+}
+
+impl RestoreTarget {
+    const fn new(hash: ObjectHash, mode: Option<TreeItemMode>) -> Self {
+        Self { hash, mode }
+    }
+
+    fn index_mode(self) -> u32 {
+        self.mode
+            .and_then(tree_item_mode_to_index_mode)
+            .unwrap_or(0o100644)
+    }
 }
 
 // ── Entry points ─────────────────────────────────────────────────────
@@ -516,7 +539,7 @@ async fn resolve_target_blobs(
     source: Option<&str>,
     staged: bool,
     storage: &ClientStorage,
-) -> Result<Vec<(PathBuf, ObjectHash)>, RestoreError> {
+) -> Result<Vec<(PathBuf, RestoreTarget)>, RestoreError> {
     const HEAD: &str = "HEAD";
 
     match source {
@@ -528,7 +551,12 @@ async fn resolve_target_blobs(
             Ok(index
                 .tracked_entries(0)
                 .into_iter()
-                .map(|entry| (PathBuf::from(&entry.name), entry.hash))
+                .map(|entry| {
+                    (
+                        PathBuf::from(&entry.name),
+                        RestoreTarget::new(entry.hash, index_mode_to_tree_item_mode(entry.mode)),
+                    )
+                })
                 .collect())
         }
         Some(src) => {
@@ -550,7 +578,10 @@ async fn resolve_target_blobs(
                 .tree_id;
             Ok(load_object::<Tree>(&tree_id)
                 .map_err(|_| RestoreError::ReadObject)?
-                .get_plain_items())
+                .get_plain_items_with_mode()
+                .into_iter()
+                .map(|(path, hash, mode)| (path, RestoreTarget::new(hash, Some(mode))))
+                .collect())
         }
     }
 }
@@ -559,7 +590,7 @@ async fn resolve_target_blobs(
 
 async fn restore_worktree_tracked(
     filter: &[PathBuf],
-    target_blobs: &[(PathBuf, ObjectHash)],
+    target_blobs: &[(PathBuf, RestoreTarget)],
     overlay: bool,
 ) -> Result<(Vec<String>, Vec<String>), RestoreError> {
     let target_map = preprocess_blobs(target_blobs);
@@ -597,8 +628,9 @@ async fn restore_worktree_tracked(
     for path_wd in &file_paths {
         let path_abs = util::workdir_to_absolute(path_wd);
         if !path_abs.exists() {
-            if target_map.contains_key(path_wd) {
-                restore_to_file_typed(&target_map[path_wd], path_wd).await?;
+            if let Some(target) = target_map.get(path_wd) {
+                restore_to_file_typed(&target.hash, path_wd).await?;
+                apply_worktree_target_mode(&path_abs, target.mode)?;
                 restored.push(path_wd.display().to_string());
             } else {
                 return Err(pathspec_not_matched(path_wd));
@@ -606,11 +638,12 @@ async fn restore_worktree_tracked(
         } else {
             let path_wd_str = path_to_utf8_typed(path_wd)?;
             let hash = calc_file_blob_hash(&path_abs).map_err(|_| RestoreError::ReadObject)?;
-            if target_map.contains_key(path_wd) {
-                if hash != target_map[path_wd] {
-                    restore_to_file_typed(&target_map[path_wd], path_wd).await?;
+            if let Some(target) = target_map.get(path_wd) {
+                if hash != target.hash {
+                    restore_to_file_typed(&target.hash, path_wd).await?;
                     restored.push(path_wd.display().to_string());
                 }
+                apply_worktree_target_mode(&path_abs, target.mode)?;
             } else if !overlay && index.tracked(path_wd_str, 0) {
                 fs::remove_file(&path_abs).map_err(|_| RestoreError::WriteWorktree)?;
                 util::clear_empty_dir(&path_abs);
@@ -626,7 +659,7 @@ async fn restore_worktree_tracked(
 
 fn restore_index_tracked(
     filter: &[PathBuf],
-    target_blobs: &[(PathBuf, ObjectHash)],
+    target_blobs: &[(PathBuf, RestoreTarget)],
     overlay: bool,
 ) -> Result<(Vec<String>, Vec<String>), RestoreError> {
     let target_map = preprocess_blobs(target_blobs);
@@ -648,25 +681,29 @@ fn restore_index_tracked(
     for path in &file_paths {
         let path_str = path_to_utf8_typed(path)?;
         if !index.tracked(path_str, 0) {
-            if target_map.contains_key(path) {
-                let hash = target_map[path];
-                let blob = load_object::<Blob>(&hash).map_err(|_| RestoreError::ReadObject)?;
-                index.add(IndexEntry::new_from_blob(
+            if let Some(target) = target_map.get(path) {
+                let blob =
+                    load_object::<Blob>(&target.hash).map_err(|_| RestoreError::ReadObject)?;
+                index.add(index_entry_from_target(
                     path_str.to_string(),
-                    hash,
+                    *target,
                     blob.data.len() as u32,
                 ));
                 restored.push(path.display().to_string());
             } else {
                 return Err(pathspec_not_matched(path));
             }
-        } else if target_map.contains_key(path) {
-            let hash = target_map[path];
-            if !index.verify_hash(path_str, 0, &hash) {
-                let blob = load_object::<Blob>(&hash).map_err(|_| RestoreError::ReadObject)?;
-                index.update(IndexEntry::new_from_blob(
+        } else if let Some(target) = target_map.get(path) {
+            let mode_matches = index
+                .get(path_str, 0)
+                .map(|entry| entry.mode == target.index_mode())
+                .unwrap_or(false);
+            if !index.verify_hash(path_str, 0, &target.hash) || !mode_matches {
+                let blob =
+                    load_object::<Blob>(&target.hash).map_err(|_| RestoreError::ReadObject)?;
+                index.update(index_entry_from_target(
                     path_str.to_string(),
-                    hash,
+                    *target,
                     blob.data.len() as u32,
                 ));
                 restored.push(path.display().to_string());
@@ -929,11 +966,70 @@ async fn reject_restore_on_ai_managed_current_branch() -> Result<(), RestoreErro
     }
 }
 
-fn preprocess_blobs(blobs: &[(PathBuf, ObjectHash)]) -> HashMap<PathBuf, ObjectHash> {
+fn preprocess_blobs(blobs: &[(PathBuf, RestoreTarget)]) -> HashMap<PathBuf, RestoreTarget> {
     blobs
         .iter()
-        .map(|(path, hash)| (path.clone(), *hash))
+        .map(|(path, target)| (path.clone(), *target))
         .collect()
+}
+
+fn legacy_targets(blobs: &[(PathBuf, ObjectHash)]) -> Vec<(PathBuf, RestoreTarget)> {
+    blobs
+        .iter()
+        .map(|(path, hash)| (path.clone(), RestoreTarget::new(*hash, None)))
+        .collect()
+}
+
+fn tree_item_mode_to_index_mode(mode: TreeItemMode) -> Option<u32> {
+    match mode {
+        TreeItemMode::Blob => Some(0o100644),
+        TreeItemMode::BlobExecutable => Some(0o100755),
+        TreeItemMode::Link => Some(0o120000),
+        TreeItemMode::Commit => Some(0o160000),
+        TreeItemMode::Tree => None,
+    }
+}
+
+fn index_mode_to_tree_item_mode(mode: u32) -> Option<TreeItemMode> {
+    match mode {
+        0o100644 => Some(TreeItemMode::Blob),
+        0o100755 => Some(TreeItemMode::BlobExecutable),
+        0o120000 => Some(TreeItemMode::Link),
+        0o160000 => Some(TreeItemMode::Commit),
+        _ => None,
+    }
+}
+
+fn index_entry_from_target(path: String, target: RestoreTarget, size: u32) -> IndexEntry {
+    let mut entry = IndexEntry::new_from_blob(path, target.hash, size);
+    entry.mode = target.index_mode();
+    entry
+}
+
+#[cfg(unix)]
+fn apply_worktree_target_mode(path: &Path, mode: Option<TreeItemMode>) -> Result<(), RestoreError> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let Some(mode) = mode else {
+        return Ok(());
+    };
+    let Some(mode) = (match mode {
+        TreeItemMode::Blob => Some(0o644),
+        TreeItemMode::BlobExecutable => Some(0o755),
+        _ => None,
+    }) else {
+        return Ok(());
+    };
+    fs::set_permissions(path, fs::Permissions::from_mode(mode))
+        .map_err(|_| RestoreError::WriteWorktree)
+}
+
+#[cfg(not(unix))]
+fn apply_worktree_target_mode(
+    _path: &Path,
+    _mode: Option<TreeItemMode>,
+) -> Result<(), RestoreError> {
+    Ok(())
 }
 
 fn path_to_utf8(path: &Path) -> io::Result<&str> {
@@ -1202,7 +1298,7 @@ pub async fn restore_to_file(hash: &ObjectHash, path: &PathBuf) -> io::Result<()
 
 fn get_worktree_deleted_files_in_filters(
     filters: &[PathBuf],
-    target_blobs: &HashMap<PathBuf, ObjectHash>,
+    target_blobs: &HashMap<PathBuf, RestoreTarget>,
 ) -> HashSet<PathBuf> {
     target_blobs
         .iter()
@@ -1220,7 +1316,8 @@ pub async fn restore_worktree(
     filter: &[PathBuf],
     target_blobs: &[(PathBuf, ObjectHash)],
 ) -> io::Result<()> {
-    let target_blobs = preprocess_blobs(target_blobs);
+    let target_blobs = legacy_targets(target_blobs);
+    let target_blobs = preprocess_blobs(&target_blobs);
     let deleted_files = get_worktree_deleted_files_in_filters(filter, &target_blobs);
 
     {
@@ -1248,8 +1345,8 @@ pub async fn restore_worktree(
     for path_wd in &file_paths {
         let path_abs = util::workdir_to_absolute(path_wd);
         if !path_abs.exists() {
-            if target_blobs.contains_key(path_wd) {
-                restore_to_file(&target_blobs[path_wd], path_wd).await?;
+            if let Some(target) = target_blobs.get(path_wd) {
+                restore_to_file(&target.hash, path_wd).await?;
             } else {
                 return Err(io::Error::other(format!(
                     "pathspec '{}' did not match any files",
@@ -1261,8 +1358,8 @@ pub async fn restore_worktree(
             let hash =
                 calc_file_blob_hash(&path_abs).map_err(|e| io::Error::other(e.to_string()))?;
             if target_blobs.contains_key(path_wd) {
-                if hash != target_blobs[path_wd] {
-                    restore_to_file(&target_blobs[path_wd], path_wd).await?;
+                if hash != target_blobs[path_wd].hash {
+                    restore_to_file(&target_blobs[path_wd].hash, path_wd).await?;
                 }
             } else if index.tracked(path_wd_str, 0) {
                 fs::remove_file(&path_abs)?;
@@ -1277,7 +1374,8 @@ async fn restore_worktree_legacy_typed(
     filter: &[PathBuf],
     target_blobs: &[(PathBuf, ObjectHash)],
 ) -> Result<(), RestoreError> {
-    let target_blobs = preprocess_blobs(target_blobs);
+    let target_blobs = legacy_targets(target_blobs);
+    let target_blobs = preprocess_blobs(&target_blobs);
     let deleted_files = get_worktree_deleted_files_in_filters(filter, &target_blobs);
 
     for path in filter {
@@ -1301,8 +1399,8 @@ async fn restore_worktree_legacy_typed(
     for path_wd in &file_paths {
         let path_abs = util::workdir_to_absolute(path_wd);
         if !path_abs.exists() {
-            if target_blobs.contains_key(path_wd) {
-                restore_to_file_typed(&target_blobs[path_wd], path_wd).await?;
+            if let Some(target) = target_blobs.get(path_wd) {
+                restore_to_file_typed(&target.hash, path_wd).await?;
             } else {
                 return Err(pathspec_not_matched(path_wd));
             }
@@ -1310,8 +1408,8 @@ async fn restore_worktree_legacy_typed(
             let path_wd_str = path_to_utf8_typed(path_wd)?;
             let hash = calc_file_blob_hash(&path_abs).map_err(|_| RestoreError::ReadObject)?;
             if target_blobs.contains_key(path_wd) {
-                if hash != target_blobs[path_wd] {
-                    restore_to_file_typed(&target_blobs[path_wd], path_wd).await?;
+                if hash != target_blobs[path_wd].hash {
+                    restore_to_file_typed(&target_blobs[path_wd].hash, path_wd).await?;
                 }
             } else if index.tracked(path_wd_str, 0) {
                 fs::remove_file(&path_abs).map_err(|_| RestoreError::WriteWorktree)?;
@@ -1324,7 +1422,8 @@ async fn restore_worktree_legacy_typed(
 }
 
 pub fn restore_index(filter: &[PathBuf], target_blobs: &[(PathBuf, ObjectHash)]) -> io::Result<()> {
-    let target_blobs = preprocess_blobs(target_blobs);
+    let target_blobs = legacy_targets(target_blobs);
+    let target_blobs = preprocess_blobs(&target_blobs);
 
     let idx_file = path::index();
     let mut index = Index::load(&idx_file).map_err(|e| io::Error::other(e.to_string()))?;
@@ -1337,12 +1436,11 @@ pub fn restore_index(filter: &[PathBuf], target_blobs: &[(PathBuf, ObjectHash)])
     for path in &file_paths {
         let path_str = path_to_utf8(path)?;
         if !index.tracked(path_str, 0) {
-            if target_blobs.contains_key(path) {
-                let hash = target_blobs[path];
-                let blob = Blob::load(&hash);
-                index.add(IndexEntry::new_from_blob(
+            if let Some(target) = target_blobs.get(path) {
+                let blob = Blob::load(&target.hash);
+                index.add(index_entry_from_target(
                     path_str.to_string(),
-                    hash,
+                    *target,
                     blob.data.len() as u32,
                 ));
             } else {
@@ -1351,13 +1449,12 @@ pub fn restore_index(filter: &[PathBuf], target_blobs: &[(PathBuf, ObjectHash)])
                     path.display()
                 )));
             }
-        } else if target_blobs.contains_key(path) {
-            let hash = target_blobs[path];
-            if !index.verify_hash(path_str, 0, &hash) {
-                let blob = Blob::load(&hash);
-                index.update(IndexEntry::new_from_blob(
+        } else if let Some(target) = target_blobs.get(path) {
+            if !index.verify_hash(path_str, 0, &target.hash) {
+                let blob = Blob::load(&target.hash);
+                index.update(index_entry_from_target(
                     path_str.to_string(),
-                    hash,
+                    *target,
                     blob.data.len() as u32,
                 ));
             }
@@ -1375,7 +1472,8 @@ fn restore_index_legacy_typed(
     filter: &[PathBuf],
     target_blobs: &[(PathBuf, ObjectHash)],
 ) -> Result<(), RestoreError> {
-    let target_blobs = preprocess_blobs(target_blobs);
+    let target_blobs = legacy_targets(target_blobs);
+    let target_blobs = preprocess_blobs(&target_blobs);
 
     let idx_file = path::index();
     let mut index = Index::load(&idx_file).map_err(|_| RestoreError::ReadIndex)?;
@@ -1389,24 +1487,24 @@ fn restore_index_legacy_typed(
     for path in &file_paths {
         let path_str = path_to_utf8_typed(path)?;
         if !index.tracked(path_str, 0) {
-            if target_blobs.contains_key(path) {
-                let hash = target_blobs[path];
-                let blob = load_object::<Blob>(&hash).map_err(|_| RestoreError::ReadObject)?;
-                index.add(IndexEntry::new_from_blob(
+            if let Some(target) = target_blobs.get(path) {
+                let blob =
+                    load_object::<Blob>(&target.hash).map_err(|_| RestoreError::ReadObject)?;
+                index.add(index_entry_from_target(
                     path_str.to_string(),
-                    hash,
+                    *target,
                     blob.data.len() as u32,
                 ));
             } else {
                 return Err(pathspec_not_matched(path));
             }
-        } else if target_blobs.contains_key(path) {
-            let hash = target_blobs[path];
-            if !index.verify_hash(path_str, 0, &hash) {
-                let blob = load_object::<Blob>(&hash).map_err(|_| RestoreError::ReadObject)?;
-                index.update(IndexEntry::new_from_blob(
+        } else if let Some(target) = target_blobs.get(path) {
+            if !index.verify_hash(path_str, 0, &target.hash) {
+                let blob =
+                    load_object::<Blob>(&target.hash).map_err(|_| RestoreError::ReadObject)?;
+                index.update(index_entry_from_target(
                     path_str.to_string(),
-                    hash,
+                    *target,
                     blob.data.len() as u32,
                 ));
             }
@@ -1424,7 +1522,7 @@ fn restore_index_legacy_typed(
 fn get_index_deleted_files_in_filters(
     index: &Index,
     filters: &[PathBuf],
-    target_blobs: &HashMap<PathBuf, ObjectHash>,
+    target_blobs: &HashMap<PathBuf, RestoreTarget>,
 ) -> io::Result<HashSet<PathBuf>> {
     let mut deleted = HashSet::new();
     for path_wd in target_blobs.keys() {
@@ -1440,7 +1538,7 @@ fn get_index_deleted_files_in_filters(
 fn get_index_deleted_files_in_filters_typed(
     index: &Index,
     filters: &[PathBuf],
-    target_blobs: &HashMap<PathBuf, ObjectHash>,
+    target_blobs: &HashMap<PathBuf, RestoreTarget>,
 ) -> Result<HashSet<PathBuf>, RestoreError> {
     let mut deleted = HashSet::new();
     for path_wd in target_blobs.keys() {

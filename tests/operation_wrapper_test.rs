@@ -79,7 +79,7 @@ async fn create_operation_schema_missing_view(db: &DatabaseConnection) {
 async fn create_reference_table_with_head(db: &DatabaseConnection) {
     db.execute(Statement::from_string(
         DbBackend::Sqlite,
-        "CREATE TABLE reference (id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT,kind TEXT NOT NULL,\"commit\" TEXT,remote TEXT)".to_string(),
+        "CREATE TABLE reference (id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT,kind TEXT NOT NULL,\"commit\" TEXT,remote TEXT,worktree_id TEXT)".to_string(),
     ))
     .await
     .unwrap();
@@ -102,7 +102,7 @@ async fn create_reference_table_with_head(db: &DatabaseConnection) {
 async fn create_reference_table_without_head(db: &DatabaseConnection) {
     db.execute(Statement::from_string(
         DbBackend::Sqlite,
-        "CREATE TABLE reference (id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT,kind TEXT NOT NULL,\"commit\" TEXT,remote TEXT)".to_string(),
+        "CREATE TABLE reference (id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT,kind TEXT NOT NULL,\"commit\" TEXT,remote TEXT,worktree_id TEXT)".to_string(),
     ))
     .await
     .unwrap();

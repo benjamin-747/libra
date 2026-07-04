@@ -22,6 +22,14 @@ fn case_repo() -> tempfile::TempDir {
     repo
 }
 
+fn skip_case_twin_fixture_on_case_insensitive_host(p: &std::path::Path, scenario: &str) -> bool {
+    if libra::utils::path_case::probe_dir_ignore_case(p) {
+        eprintln!("skipping {scenario}: host filesystem is case-insensitive");
+        return true;
+    }
+    false
+}
+
 #[test]
 fn init_records_probed_ignorecase() {
     let repo = create_committed_repo_via_cli();
@@ -68,6 +76,9 @@ fn mv_case_only_rename_rekeys_index() {
 fn add_refuses_case_fold_twins_under_error_default() {
     let repo = case_repo();
     let p = repo.path();
+    if skip_case_twin_fixture_on_case_insensitive_host(p, "case-fold add twin") {
+        return;
+    }
     // Fabricate the case-insensitive view.
     assert_cli_success(
         &run_libra_command(&["config", "core.ignorecase", "true"], p),
@@ -121,6 +132,9 @@ fn add_refuses_case_fold_twins_under_error_default() {
 fn checkout_switch_refuse_colliding_trees_on_insensitive_view() {
     let repo = case_repo();
     let p = repo.path();
+    if skip_case_twin_fixture_on_case_insensitive_host(p, "colliding tree checkout") {
+        return;
+    }
     // Build a branch whose tree carries BOTH casings (legal on ext4).
     assert_cli_success(&run_libra_command(&["branch", "twins"], p), "branch");
     assert_cli_success(&run_libra_command(&["switch", "twins"], p), "switch");

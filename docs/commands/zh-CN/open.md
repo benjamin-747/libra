@@ -35,14 +35,14 @@ libra open [<remote>]
 ```bash
 libra open
 libra open origin
-libra open https://github.com/web3infra-foundation/libra
+libra open https://github.com/libra-tools/libra
 libra open --json
 ```
 
 ## 人类可读输出
 
 ```text
-Opening https://github.com/web3infra-foundation/libra
+Opening https://github.com/libra-tools/libra
 ```
 
 `--quiet` 会抑制 `stdout`。
@@ -55,8 +55,8 @@ Opening https://github.com/web3infra-foundation/libra
   "command": "open",
   "data": {
     "remote": "origin",
-    "remote_url": "git@github.com:web3infra-foundation/libra.git",
-    "web_url": "https://github.com/web3infra-foundation/libra",
+    "remote_url": "git@github.com:libra-tools/libra.git",
+    "web_url": "https://github.com/libra-tools/libra",
     "launched": false
   }
 }
@@ -70,8 +70,8 @@ Opening https://github.com/web3infra-foundation/libra
   "command": "open",
   "data": {
     "remote": null,
-    "remote_url": "https://github.com/web3infra-foundation/libra",
-    "web_url": "https://github.com/web3infra-foundation/libra",
+    "remote_url": "https://github.com/libra-tools/libra",
+    "web_url": "https://github.com/libra-tools/libra",
     "launched": false
   }
 }

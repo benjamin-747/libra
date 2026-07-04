@@ -78,3 +78,41 @@ fn every_stable_error_code_appears_in_user_facing_doc() {
          {missing:?}"
     );
 }
+
+/// One `LBR-*` code must map to exactly one `StableErrorCode` variant —
+/// duplicated literals in the `as_str()` match would silently give two
+/// semantics the same wire code (the `LBR-AGENT-001` near-collision that
+/// AG-18/E10 planning caught). Scans only the `code()`/`as_str()` match
+/// arm region (`Self::X => "LBR-..."` lines) so pin-test literals don't
+/// count as duplicates.
+#[test]
+fn no_stable_code_literal_maps_to_multiple_variants() {
+    use std::collections::BTreeMap;
+    let mut seen: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for line in ERROR_RS.lines() {
+        let trimmed = line.trim();
+        let Some(rest) = trimmed.strip_prefix("Self::") else {
+            continue;
+        };
+        // Shape: Self::Variant => "LBR-FOO-NNN",
+        let Some((variant, tail)) = rest.split_once(" => \"") else {
+            continue;
+        };
+        let Some(code) = tail.split('"').next() else {
+            continue;
+        };
+        if !code.starts_with("LBR-") {
+            continue;
+        }
+        seen.entry(code).or_default().push(variant);
+    }
+    let duplicates: Vec<String> = seen
+        .iter()
+        .filter(|(_, variants)| variants.len() > 1)
+        .map(|(code, variants)| format!("{code} -> {variants:?}"))
+        .collect();
+    assert!(
+        duplicates.is_empty(),
+        "a stable LBR code maps to multiple StableErrorCode variants: {duplicates:?}"
+    );
+}

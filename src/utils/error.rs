@@ -229,6 +229,42 @@ pub enum StableErrorCode {
     /// AI agent run hit a configured budget cap (cost, tokens, steps,
     /// or wall-clock). OC-Phase 5 P5.3 enforcement surface.
     AgentBudgetExceeded,
+    /// External `libra-agent-*` discovery/invocation requested while the
+    /// `agent.external_agents.enabled` gate (default `false`) is off (E10
+    /// `ERR_AGENT_EXTERNAL_AGENTS_DISABLED`, AG-18).
+    AgentExternalAgentsDisabled,
+    /// External agent binary negotiated an incompatible protocol version
+    /// (E10 `ERR_AGENT_PROTOCOL_VERSION_MISMATCH`, AG-18).
+    AgentProtocolVersionMismatch,
+    /// Method invoked on an external agent without being declared in its
+    /// negotiated capabilities (E10 `ERR_AGENT_CAPABILITY_UNDECLARED`, AG-18).
+    AgentCapabilityUndeclared,
+    /// External binary failed provenance revalidation — sha256/device/
+    /// inode/mtime changed since trust was recorded, or the binary is not
+    /// trusted (E10 `ERR_AGENT_PROVENANCE_REJECTED`, AG-18).
+    AgentProvenanceRejected,
+    /// External `libra-agent-*` binary tried to shadow a built-in agent
+    /// slug (E10 `ERR_AGENT_BUILTIN_SLUG_IMPERSONATION`, AG-18).
+    AgentBuiltinSlugImpersonation,
+    /// External agent IO exceeded hard caps or failed redaction; output is
+    /// withheld fail-closed (E10 `ERR_AGENT_IO_REDACTION_SECURITY_FAILURE`,
+    /// AG-18/AG-19).
+    AgentIoRedactionSecurityFailure,
+    /// Hook envelope failed central validation (UTF-8/JSON/schema/path)
+    /// before checkpoint persistence (E10 `ERR_AGENT_HOOK_ENVELOPE_INVALID`,
+    /// AG-19).
+    AgentHookEnvelopeInvalid,
+    /// Agent checkpoint store inconsistent across ref/DB/object-index
+    /// (E10 `ERR_AGENT_CHECKPOINT_STORE_INCONSISTENT`, AG-20).
+    AgentCheckpointStoreInconsistent,
+    /// `review --fix` / `investigate fix` requested but the internal
+    /// AgentRuntime fix bridge is unavailable (E10
+    /// `ERR_AGENT_FIX_BRIDGE_UNAVAILABLE`, AG-22/AG-23).
+    AgentFixBridgeUnavailable,
+    /// Untrusted seed content attempted to enter a mutating workflow
+    /// without explicit approval (E10 `ERR_AGENT_UNTRUSTED_SEED_FOR_MUTATION`,
+    /// AG-22/AG-23).
+    AgentUntrustedSeedForMutation,
 }
 
 impl Serialize for StableErrorCode {
@@ -273,6 +309,16 @@ impl StableErrorCode {
             Self::BisectRunFailed => "LBR-BISECT-002",
             Self::BisectNoCandidates => "LBR-BISECT-003",
             Self::AgentBudgetExceeded => "LBR-AGENT-001",
+            Self::AgentExternalAgentsDisabled => "LBR-AGENT-002",
+            Self::AgentProtocolVersionMismatch => "LBR-AGENT-003",
+            Self::AgentCapabilityUndeclared => "LBR-AGENT-004",
+            Self::AgentProvenanceRejected => "LBR-AGENT-005",
+            Self::AgentBuiltinSlugImpersonation => "LBR-AGENT-006",
+            Self::AgentIoRedactionSecurityFailure => "LBR-AGENT-007",
+            Self::AgentHookEnvelopeInvalid => "LBR-AGENT-008",
+            Self::AgentCheckpointStoreInconsistent => "LBR-AGENT-009",
+            Self::AgentFixBridgeUnavailable => "LBR-AGENT-010",
+            Self::AgentUntrustedSeedForMutation => "LBR-AGENT-011",
         }
     }
 
@@ -312,6 +358,16 @@ impl StableErrorCode {
             // early abort. Fits the Internal category (the run could
             // continue if the cap were lifted) per docs/error-codes.md.
             Self::AgentBudgetExceeded => CliErrorCategory::Internal,
+            Self::AgentExternalAgentsDisabled
+            | Self::AgentProtocolVersionMismatch
+            | Self::AgentCapabilityUndeclared
+            | Self::AgentProvenanceRejected
+            | Self::AgentBuiltinSlugImpersonation
+            | Self::AgentIoRedactionSecurityFailure
+            | Self::AgentHookEnvelopeInvalid
+            | Self::AgentCheckpointStoreInconsistent
+            | Self::AgentFixBridgeUnavailable
+            | Self::AgentUntrustedSeedForMutation => CliErrorCategory::Internal,
         }
     }
 
@@ -415,6 +471,36 @@ impl StableErrorCode {
             }
             Self::AgentBudgetExceeded => {
                 "AI agent run hit a configured budget cap (cost, tokens, steps, or wall-clock)."
+            }
+            Self::AgentExternalAgentsDisabled => {
+                "External libra-agent-* agents are disabled; set agent.external_agents.enabled=true to opt in."
+            }
+            Self::AgentProtocolVersionMismatch => {
+                "External agent binary negotiated an incompatible protocol version."
+            }
+            Self::AgentCapabilityUndeclared => {
+                "Method not declared in the external agent's negotiated capabilities."
+            }
+            Self::AgentProvenanceRejected => {
+                "External agent binary failed provenance revalidation (untrusted or changed since trust)."
+            }
+            Self::AgentBuiltinSlugImpersonation => {
+                "External libra-agent-* binary tried to impersonate a built-in agent slug."
+            }
+            Self::AgentIoRedactionSecurityFailure => {
+                "External agent IO exceeded hard caps or failed redaction; output withheld fail-closed."
+            }
+            Self::AgentHookEnvelopeInvalid => {
+                "Hook envelope failed validation before checkpoint persistence."
+            }
+            Self::AgentCheckpointStoreInconsistent => {
+                "Agent checkpoint store inconsistent across ref/DB/object-index; run libra agent doctor."
+            }
+            Self::AgentFixBridgeUnavailable => {
+                "review/investigate --fix requires the internal AgentRuntime fix bridge, which is not available."
+            }
+            Self::AgentUntrustedSeedForMutation => {
+                "Untrusted seed content cannot enter a mutating workflow without explicit approval."
             }
         }
     }
@@ -1733,6 +1819,38 @@ mod tests {
             StableErrorCode::AgentBudgetExceeded.as_str(),
             "LBR-AGENT-001",
         );
+        for (variant, code) in [
+            (
+                StableErrorCode::AgentExternalAgentsDisabled,
+                "LBR-AGENT-002",
+            ),
+            (
+                StableErrorCode::AgentProtocolVersionMismatch,
+                "LBR-AGENT-003",
+            ),
+            (StableErrorCode::AgentCapabilityUndeclared, "LBR-AGENT-004"),
+            (StableErrorCode::AgentProvenanceRejected, "LBR-AGENT-005"),
+            (
+                StableErrorCode::AgentBuiltinSlugImpersonation,
+                "LBR-AGENT-006",
+            ),
+            (
+                StableErrorCode::AgentIoRedactionSecurityFailure,
+                "LBR-AGENT-007",
+            ),
+            (StableErrorCode::AgentHookEnvelopeInvalid, "LBR-AGENT-008"),
+            (
+                StableErrorCode::AgentCheckpointStoreInconsistent,
+                "LBR-AGENT-009",
+            ),
+            (StableErrorCode::AgentFixBridgeUnavailable, "LBR-AGENT-010"),
+            (
+                StableErrorCode::AgentUntrustedSeedForMutation,
+                "LBR-AGENT-011",
+            ),
+        ] {
+            assert_eq!(variant.as_str(), code);
+        }
     }
 
     /// Pin the [`CliErrorCategory`] grouping returned by
@@ -1847,5 +1965,22 @@ mod tests {
             StableErrorCode::AgentBudgetExceeded.category(),
             CliErrorCategory::Internal,
         );
+        // E10 agent codes (LBR-AGENT-002..011) all route to Internal —
+        // per docs/development/tracing/agent.md E10 they must exit 128
+        // (runtime category), never 129.
+        for variant in [
+            StableErrorCode::AgentExternalAgentsDisabled,
+            StableErrorCode::AgentProtocolVersionMismatch,
+            StableErrorCode::AgentCapabilityUndeclared,
+            StableErrorCode::AgentProvenanceRejected,
+            StableErrorCode::AgentBuiltinSlugImpersonation,
+            StableErrorCode::AgentIoRedactionSecurityFailure,
+            StableErrorCode::AgentHookEnvelopeInvalid,
+            StableErrorCode::AgentCheckpointStoreInconsistent,
+            StableErrorCode::AgentFixBridgeUnavailable,
+            StableErrorCode::AgentUntrustedSeedForMutation,
+        ] {
+            assert_eq!(variant.category(), CliErrorCategory::Internal);
+        }
     }
 }

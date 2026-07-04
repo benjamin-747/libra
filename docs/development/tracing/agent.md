@@ -880,21 +880,21 @@ entire 当前是 1 stable（`claude-code`）+ 7 preview（`codex`、`copilot-cli
 
 ### E10：稳定错误码语义目录（fail-closed 目录）
 
-所有 E2/E3/E4-libra/E8-libra fail-closed 路径须映射到 `StableErrorCode`（见强制补强项 #8 与「落地执行补充规格 §4」）。**本表只冻结语义键，不预占 `LBR-*` 字面编号**：`LBR-AGENT-001` 当前已发布为 `AgentBudgetExceeded`，因此 A3 必须先在 `docs/error-codes.md` 中分配未占用的真实编号，再把编号写回实现、用户文档和 snapshot test。
+所有 E2/E3/E4-libra/E8-libra fail-closed 路径须映射到 `StableErrorCode`（见强制补强项 #8 与「落地执行补充规格 §4」）。**本表语义键的真实编号已由 A3 于 2026-07-04 分配**（`LBR-AGENT-002`~`011`，见 `docs/error-codes.md` 与 `src/utils/error.rs` pin 测试；`LBR-AGENT-001` 早已发布为 `AgentBudgetExceeded`，未被复用）。
 
-| 语义键 | 触发条件 | 主要 AG |
-|---|---|---|
-| `ERR_AGENT_EXTERNAL_AGENTS_DISABLED` | external agents 未启用但请求 invoke/trust | AG-18 |
-| `ERR_AGENT_PROTOCOL_VERSION_MISMATCH` | protocol version mismatch | AG-18 |
-| `ERR_AGENT_CAPABILITY_UNDECLARED` | undeclared capability / method | AG-18 |
-| `ERR_AGENT_PROVENANCE_REJECTED` | provenance 拒绝或 hash 变化 | AG-18 |
-| `ERR_AGENT_BUILTIN_SLUG_IMPERSONATION` | built-in slug impersonation | AG-18 |
-| `ERR_AGENT_IO_REDACTION_SECURITY_FAILURE` | env/stderr/redaction 安全失败 | AG-18/AG-19 |
-| `ERR_AGENT_HOOK_ENVELOPE_INVALID` | hook envelope UTF-8/JSON/schema/path 校验失败 | AG-19 |
-| `ERR_AGENT_CHECKPOINT_STORE_INCONSISTENT` | checkpoint ref/DB/object/object_index 写入或恢复失败 | AG-20 |
-| `ERR_AGENT_FIX_BRIDGE_UNAVAILABLE` | review/investigate `--fix` bridge 未就绪 | AG-22/AG-23 |
-| `ERR_AGENT_UNTRUSTED_SEED_FOR_MUTATION` | untrusted seed 请求进入 mutating workflow | AG-22/AG-23 |
-| `ERR_AGENT_TRACES_PUSH_DIVERGED` | prune/rewrite 后 `agent push` 遇 `refs/libra/traces` 非快进发散（仅当 plan.md A5 选定方案 (b) 稳定错误码 + 重推出口时启用；方案 (a) force-with-lease 等价语义无需新码） | AG-20 |
+| 语义键 | 真实编号（A3 已分配，2026-07-04） | 触发条件 | 主要 AG |
+|---|---|---|---|
+| `ERR_AGENT_EXTERNAL_AGENTS_DISABLED` | `LBR-AGENT-002` | external agents 未启用但请求 invoke/trust | AG-18 |
+| `ERR_AGENT_PROTOCOL_VERSION_MISMATCH` | `LBR-AGENT-003` | protocol version mismatch | AG-18 |
+| `ERR_AGENT_CAPABILITY_UNDECLARED` | `LBR-AGENT-004` | undeclared capability / method | AG-18 |
+| `ERR_AGENT_PROVENANCE_REJECTED` | `LBR-AGENT-005` | provenance 拒绝或 hash 变化 | AG-18 |
+| `ERR_AGENT_BUILTIN_SLUG_IMPERSONATION` | `LBR-AGENT-006` | built-in slug impersonation | AG-18 |
+| `ERR_AGENT_IO_REDACTION_SECURITY_FAILURE` | `LBR-AGENT-007` | env/stderr/redaction 安全失败 | AG-18/AG-19 |
+| `ERR_AGENT_HOOK_ENVELOPE_INVALID` | `LBR-AGENT-008` | hook envelope UTF-8/JSON/schema/path 校验失败 | AG-19 |
+| `ERR_AGENT_CHECKPOINT_STORE_INCONSISTENT` | `LBR-AGENT-009` | checkpoint ref/DB/object/object_index 写入或恢复失败 | AG-20 |
+| `ERR_AGENT_FIX_BRIDGE_UNAVAILABLE` | `LBR-AGENT-010` | review/investigate `--fix` bridge 未就绪 | AG-22/AG-23 |
+| `ERR_AGENT_UNTRUSTED_SEED_FOR_MUTATION` | `LBR-AGENT-011` | untrusted seed 请求进入 mutating workflow | AG-22/AG-23 |
+| `ERR_AGENT_TRACES_PUSH_DIVERGED` | 未分配（A5 方案 (b) 时在其 slice 分配） | prune/rewrite 后 `agent push` 遇 `refs/libra/traces` 非快进发散（仅当 plan.md A5 选定方案 (b) 稳定错误码 + 重推出口时启用；方案 (a) force-with-lease 等价语义无需新码） | AG-20 |
 
 真实 `LBR-*` 编号以 `docs/error-codes.md` 为准；新增/重命名须同步 `compat_error_codes_doc_sync`，并补同码不得映射多个 variant 的唯一性守卫。
 

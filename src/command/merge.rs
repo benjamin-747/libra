@@ -23,7 +23,7 @@ use git_internal::{
 use serde::{Deserialize, Serialize};
 
 use super::{
-    get_target_commit, load_object, log, reset,
+    get_target_commit, load_object, reset,
     restore::{self, RestoreArgs},
     save_object, status, switch,
 };
@@ -35,6 +35,7 @@ use crate::{
         config::ConfigKv,
         db::get_db_conn_instance,
         head::Head,
+        merge_base,
         reflog::{ReflogAction, ReflogContext, with_reflog},
         tree_plumbing,
     },
@@ -958,7 +959,6 @@ async fn run_merge_for_pull_inner(
         })?;
 
     let lca = lca_commit(&current_commit, &target_commit)
-        .await
         .map_err(|error| PullMergeError::History(error.to_string()))?;
 
     let lca = lca.ok_or(PullMergeError::UnrelatedHistories)?;
@@ -1545,32 +1545,20 @@ async fn resolve_merge_target(target_ref: &str) -> Result<ObjectHash, Box<dyn st
     get_target_commit(target_ref).await
 }
 
-async fn lca_commit(lhs: &Commit, rhs: &Commit) -> Result<Option<Commit>, CliError> {
-    let lhs_reachable = log::get_reachable_commits(lhs.id.to_string(), None).await?;
-    let rhs_reachable = log::get_reachable_commits(rhs.id.to_string(), None).await?;
+fn lca_commit(lhs: &Commit, rhs: &Commit) -> Result<Option<Commit>, CliError> {
+    let Some(base_id) = merge_base::merge_base(&lhs.id, &rhs.id).map_err(|error| {
+        CliError::fatal(format!("failed to compute merge base: {error}"))
+            .with_stable_code(StableErrorCode::RepoCorrupt)
+    })?
+    else {
+        return Ok(None);
+    };
 
-    // Commit `eq` is based on tree_id, so we shouldn't use it here
-
-    for commit in lhs_reachable.iter() {
-        if commit.id == rhs.id {
-            return Ok(Some(commit.to_owned()));
-        }
-    }
-
-    for commit in rhs_reachable.iter() {
-        if commit.id == lhs.id {
-            return Ok(Some(commit.to_owned()));
-        }
-    }
-
-    for lhs_parent in lhs_reachable.iter() {
-        for rhs_parent in rhs_reachable.iter() {
-            if lhs_parent.id == rhs_parent.id {
-                return Ok(Some(lhs_parent.to_owned()));
-            }
-        }
-    }
-    Ok(None)
+    let base = load_object::<Commit>(&base_id).map_err(|error| {
+        CliError::fatal(format!("failed to load merge base {base_id}: {error}"))
+            .with_stable_code(StableErrorCode::RepoCorrupt)
+    })?;
+    Ok(Some(base))
 }
 
 async fn apply_fast_forward_merge(

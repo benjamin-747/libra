@@ -77,12 +77,13 @@ fn idx_v2_layout_matches_hash_kind(bytes: &[u8], object_count: usize, kind: Hash
     let offset_table = &bytes[cursor..offsets_end];
     cursor = offsets_end;
 
-    let large_count = offset_table
-        .chunks_exact(4)
-        .filter(|raw| {
-            let offset = u32::from_be_bytes([raw[0], raw[1], raw[2], raw[3]]);
-            offset & 0x8000_0000 != 0
-        })
+    let (offset_chunks, offset_remainder) = offset_table.as_chunks::<4>();
+    if !offset_remainder.is_empty() {
+        return false;
+    }
+    let large_count = offset_chunks
+        .iter()
+        .filter(|raw| u32::from_be_bytes(**raw) & 0x8000_0000 != 0)
         .count();
     let Some(trailer_start) = cursor.checked_add(large_count.saturating_mul(8)) else {
         return false;
@@ -138,9 +139,13 @@ pub(super) fn parse_idx_v2(bytes: &[u8]) -> Result<ParsedIndex, String> {
     let offset_table = &bytes[cursor..offsets_end];
     cursor = offsets_end;
 
-    let large_count = offset_table
-        .chunks_exact(4)
-        .filter(|raw| u32::from_be_bytes([raw[0], raw[1], raw[2], raw[3]]) & 0x8000_0000 != 0)
+    let (offset_chunks, offset_remainder) = offset_table.as_chunks::<4>();
+    if !offset_remainder.is_empty() {
+        return Err("pack index v2 offset table is truncated".to_string());
+    }
+    let large_count = offset_chunks
+        .iter()
+        .filter(|raw| u32::from_be_bytes(**raw) & 0x8000_0000 != 0)
         .count();
     let large_offsets_end = cursor + large_count * 8;
     let trailer_start = large_offsets_end;
@@ -153,12 +158,13 @@ pub(super) fn parse_idx_v2(bytes: &[u8]) -> Result<ParsedIndex, String> {
     let index_hash_len = remaining - hash_len;
 
     let mut large_offsets = Vec::with_capacity(large_count);
-    for chunk in bytes[cursor..large_offsets_end].chunks_exact(8) {
-        large_offsets.push(u64::from_be_bytes(
-            chunk
-                .try_into()
-                .map_err(|_| "truncated v2 large offset".to_string())?,
-        ));
+    let (large_offset_chunks, large_offset_remainder) =
+        bytes[cursor..large_offsets_end].as_chunks::<8>();
+    if !large_offset_remainder.is_empty() {
+        return Err("truncated v2 large offset".to_string());
+    }
+    for chunk in large_offset_chunks {
+        large_offsets.push(u64::from_be_bytes(*chunk));
     }
 
     let mut entries = Vec::with_capacity(object_count);

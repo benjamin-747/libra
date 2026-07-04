@@ -1058,7 +1058,7 @@ async fn resolve_positional_revisions(args: &mut DiffArgs) -> Result<(), DiffErr
     let dashdash = !args.after_dashdash.is_empty() || bare_dashdash_in_diff_argv();
     // Post-`--` tokens are pathspecs verbatim (no existence check, matching
     // `git diff -- nosuch` → empty diff). Fold them in up front.
-    let trailing_paths: Vec<String> = args.after_dashdash.drain(..).collect();
+    let trailing_paths = std::mem::take(&mut args.after_dashdash);
 
     if args.old.is_some() || args.new.is_some() {
         args.pathspec.extend(trailing_paths);

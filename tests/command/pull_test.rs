@@ -243,6 +243,60 @@ async fn test_pull_ff_only_fast_forward_updates_head_from_tracking_remote() {
     );
 }
 
+#[cfg(unix)]
+#[tokio::test]
+#[serial]
+async fn test_pull_fast_forward_skips_untracked_artifacts_during_restore() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (_temp_root, remote_dir, work_dir, branch) = create_remote_fixture();
+
+    let local_repo = tempdir().expect("failed to create local repo");
+    init_repo_via_cli(local_repo.path());
+    configure_identity_via_cli(local_repo.path());
+    configure_pull_tracking(local_repo.path(), &remote_dir, &branch);
+
+    let first_pull = run_libra_command(&["pull"], local_repo.path());
+    assert_cli_success(&first_pull, "initial pull");
+
+    fs::write(local_repo.path().join(".libraignore"), "target/\n")
+        .expect("failed to write ignore file");
+    let artifact_dir = local_repo.path().join("target/deep");
+    fs::create_dir_all(&artifact_dir).expect("failed to create artifact dir");
+    fs::write(artifact_dir.join("artifact.bin"), b"untracked build output")
+        .expect("failed to write artifact");
+    fs::set_permissions(&artifact_dir, fs::Permissions::from_mode(0o000))
+        .expect("failed to lock artifact dir");
+
+    let new_head = push_remote_commit(
+        &work_dir,
+        &branch,
+        "remote.txt",
+        "remote change\n",
+        "remote update",
+    );
+    let output = run_libra_command(&["pull", "--ff-only"], local_repo.path());
+
+    fs::set_permissions(&artifact_dir, fs::Permissions::from_mode(0o700))
+        .expect("failed to unlock artifact dir");
+
+    assert_cli_success(&output, "pull should not scan untracked build artifacts");
+
+    let _guard = ChangeDirGuard::new(local_repo.path());
+    let head = Head::current_commit()
+        .await
+        .expect("pull should update HEAD to the fetched commit");
+    assert_eq!(head.to_string(), new_head);
+    assert!(
+        local_repo.path().join("remote.txt").exists(),
+        "pull should restore tracked files from the fetched commit"
+    );
+    assert!(
+        artifact_dir.join("artifact.bin").exists(),
+        "pull should leave untracked artifacts alone"
+    );
+}
+
 #[tokio::test]
 #[serial]
 async fn test_pull_diverged_remote_creates_three_way_merge() {

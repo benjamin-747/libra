@@ -21,7 +21,7 @@ pub(crate) struct ScenarioMeta {
 }
 
 pub(crate) fn load_manifest(repo_root: &Path) -> Result<ScenarioManifest> {
-    let path = repo_root.join("docs/development/integration-scenarios.yaml");
+    let path = repo_root.join("docs/development/integration/integration-scenarios/integration-scenarios.yaml");
     let text = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
     serde_yaml::from_str(&text).with_context(|| format!("parse {}", path.display()))
 }

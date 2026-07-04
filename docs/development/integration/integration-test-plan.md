@@ -81,7 +81,7 @@ cargo test --test ai_agent_test -- --test-threads=1
 
 ### 2.3 Command Coverage Matrix
 
-`tools/integration-runner check-plan` 以本表作为命令覆盖索引：每一行的 `Owner scenarios` 必须只引用 `docs/development/integration-scenarios.yaml` 中已经注册的 `cli.*` / `live.*` 场景。修改 Git 兼容命令、命令参数、输出契约或可观测错误时，必须同步更新 YAML、对应场景文档、runner 实现和本表，确保 `check-plan`、`list`、默认本地 wave 以及相关集成测试方案保持一致。
+`tools/integration-runner check-plan` 以本表作为命令覆盖索引：每一行的 `Owner scenarios` 必须只引用 `docs/development/integration/integration-scenarios/integration-scenarios.yaml` 中已经注册的 `cli.*` / `live.*` 场景。修改 Git 兼容命令、命令参数、输出契约或可观测错误时，必须同步更新 YAML、对应场景文档、runner 实现和本表，确保 `check-plan`、`list`、默认本地 wave 以及相关集成测试方案保持一致。
 
 | 覆盖域 | 主要命令/能力 | Wave | 当前状态 | Owner scenarios |
 |---|---|---:|---|---|

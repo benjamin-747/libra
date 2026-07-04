@@ -11,7 +11,7 @@ pub(crate) struct Cli {
 
 #[derive(Subcommand)]
 pub(crate) enum Commands {
-    /// List scenarios from docs/development/integration-scenarios.yaml.
+    /// List scenarios from docs/development/integration/integration-scenarios/integration-scenarios.yaml.
     List,
     /// Check yaml, markdown, matrix, and implemented runner registry alignment.
     CheckPlan,

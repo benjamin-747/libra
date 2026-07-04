@@ -171,14 +171,14 @@ fn flag_values(body: &str, flag: &str) -> BTreeSet<String> {
 
 pub(crate) fn plan_test_targets() -> BTreeSet<String> {
     flag_values(
-        &read_repo_file("docs/development/integration-test-plan.md"),
+        &read_repo_file("docs/development/integration/integration-test-plan.md"),
         "--test",
     )
 }
 
 pub(crate) fn plan_features() -> BTreeSet<String> {
     flag_values(
-        &read_repo_file("docs/development/integration-test-plan.md"),
+        &read_repo_file("docs/development/integration/integration-test-plan.md"),
         "--features",
     )
     .into_iter()

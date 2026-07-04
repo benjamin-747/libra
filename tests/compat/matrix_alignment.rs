@@ -49,7 +49,14 @@ fn command_development_readme_matches_public_cli_surface() {
     );
 
     for command in public_docs.union(&unpublished_docs) {
-        let path = repo_root().join(format!("docs/development/commands/{command}.md"));
+        // agent/code development docs live under docs/development/tracing/ since the
+        // 932c3a0 reorganization; their README rows link there instead of this directory.
+        let relative = if command == "agent" || command == "code" {
+            format!("docs/development/tracing/{command}.md")
+        } else {
+            format!("docs/development/commands/{command}.md")
+        };
+        let path = repo_root().join(&relative);
         assert!(
             path.is_file(),
             "command development README links to missing document: {}",
@@ -100,8 +107,8 @@ fn docs_consistency_covers_code_command_router_contracts() {
     let web_mod = read_repo_file("src/internal/ai/web/mod.rs");
     let code_doc = read_repo_file("docs/commands/code.md");
     let code_control_doc = read_repo_file("docs/commands/code-control.md");
-    let integration_plan = read_repo_file("docs/development/integration-test-plan.md");
-    let agent_doc = read_repo_file("docs/development/commands/agent.md");
+    let integration_plan = read_repo_file("docs/development/integration/integration-test-plan.md");
+    let agent_doc = read_repo_file("docs/development/tracing/agent.md");
     let workflow = read_repo_file(".github/workflows/base.yml");
     let source_and_docs = [
         web_mod.as_str(),
@@ -158,17 +165,17 @@ fn docs_consistency_covers_code_command_router_contracts() {
         (
             integration_plan.as_str(),
             "test-provider",
-            "docs/development/integration-test-plan.md",
+            "docs/development/integration/integration-test-plan.md",
         ),
         (
             integration_plan.as_str(),
             "code_ui_scenarios",
-            "docs/development/integration-test-plan.md",
+            "docs/development/integration/integration-test-plan.md",
         ),
         (
             agent_doc.as_str(),
             "diagnostics_redaction_test",
-            "docs/development/commands/agent.md",
+            "docs/development/tracing/agent.md",
         ),
     ] {
         assert_contains(body, needle, context);

@@ -4,7 +4,7 @@
 > Format: `target | wave | one-line purpose | relevant src paths`
 >
 > - `target` is the cargo `--test` name (matches `tests/<target>.rs`).
-> - `wave` references `docs/development/integration-test-plan.md §4`.
+> - `wave` references `docs/development/integration/integration-test-plan.md §4`.
 > - Use the three-part form `<target>::<test_fn>` whenever you reference a
 >   specific test in PRs, reviews, or issue trackers (see §9.1 of the plan).
 >
@@ -33,7 +33,7 @@
 | `compat_extra_production_unwrap_guard` | 1 | Bans `unwrap()/expect()` in miscellaneous modules | `src/**` |
 | `compat_all_production_unwrap_guard` | 1 | Bans `unwrap()/expect()` in general production codebase | `src/**` |
 | `compat_agent_run_non_exhaustive_guard` | 1 | Enforces `#[non_exhaustive]` on every `pub enum` under `agent_run/` for additive evolution | `src/internal/ai/agent_run/` |
-| `compat_agent_docs_contract` | 1 | Guards active Agent plan claims against stale removed-provider status | `docs/development/commands/agent.md`, `src/command/code.rs` |
+| `compat_agent_docs_contract` | 1 | Guards active Agent plan claims against stale removed-provider status | `docs/development/tracing/agent.md`, `src/command/code.rs` |
 | `compat_help_examples_banner` | 1 | Every visible command in `src/cli.rs::Commands` renders an `EXAMPLES:` / `Examples:` section in `<cmd> --help` (cross-cutting item B) | `src/cli.rs`, `src/command/**` |
 | `compat_error_codes_doc_sync` | 1 | Every `LBR-*-NNN` literal in `src/utils/error.rs` is documented in `docs/error-codes.md` | `src/utils/error.rs`, `docs/error-codes.md` |
 | `compat_command_docs_examples_section` | 1 | Every `docs/commands/<name>.md` page carries an `## Examples` / `## Common Commands` heading | `docs/commands/**` |
@@ -177,7 +177,7 @@ relevant source entry above.
 ## Maintenance
 
 - Every new `tests/<name>.rs` must add a row here in the same PR (enforced by
-  §10 of `docs/development/integration-test-plan.md`).
+  §10 of `docs/development/integration/integration-test-plan.md`).
 - Renames must update both this index and the plan; `compat_matrix_alignment`
   will fail CI on dangling references.
 - TODO rows are tracked as `BASELINE_GAP-INTEG-007` — the index pass.

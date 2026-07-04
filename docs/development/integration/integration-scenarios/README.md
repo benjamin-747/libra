@@ -1,6 +1,6 @@
 # 黑盒 CLI 集成测试场景（按场景拆分）
 
-每个 `cli.*` / `live.*` 场景一份可执行文档，与 [`integration-scenarios.yaml`](../integration-scenarios.yaml) 和 `tools/integration-runner/src/scenarios/<id>.rs` 一一对应。
+每个 `cli.*` / `live.*` 场景一份可执行文档，与 [`integration-scenarios.yaml`](integration-scenarios.yaml) 和 `tools/integration-runner/src/scenarios/<id>.rs` 一一对应。
 计划总则、§3.3.1 隔离模板、§2.3 覆盖矩阵、PR 协议见 [`integration-test-plan.md`](../integration-test-plan.md)。
 
 修改某个 Git 兼容命令时，优先编辑**本目录下对应该命令组的场景文件** + yaml 元数据 + runner 实现。下方「命令 → 场景映射」给出每个命令到其 owner 场景的直接索引，改命令时据此定位需要同步更新的集成测试文件。

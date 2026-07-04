@@ -48,9 +48,9 @@ fn source_verifiable_signals(category: &str) -> Option<&'static [&'static str]> 
     })
 }
 
-/// Per-scenario markdown under `docs/development/integration-scenarios/<id>.md`.
+/// Per-scenario markdown under `docs/development/integration/integration-scenarios/<id>.md`.
 fn load_scenario_docs(repo_root: &Path) -> Result<(BTreeSet<String>, BTreeSet<String>)> {
-    let scenarios_dir = repo_root.join("docs/development/integration-scenarios");
+    let scenarios_dir = repo_root.join("docs/development/integration/integration-scenarios");
     let heading_re = Regex::new(r"(?m)^### `([^`]+)`").context("compile heading regex")?;
     let scenario_re = Regex::new(r#"SCENARIO="([^"]+)""#).context("compile scenario regex")?;
     let mut md_headings = BTreeSet::new();
@@ -98,7 +98,7 @@ fn load_scenario_docs(repo_root: &Path) -> Result<(BTreeSet<String>, BTreeSet<St
 
 pub(crate) fn check_plan(repo_root: &Path) -> Result<()> {
     let manifest = load_manifest(repo_root)?;
-    let plan_path = repo_root.join("docs/development/integration-test-plan.md");
+    let plan_path = repo_root.join("docs/development/integration/integration-test-plan.md");
     let plan_md =
         fs::read_to_string(&plan_path).with_context(|| format!("read {}", plan_path.display()))?;
     let (md_headings, md_scenarios) = load_scenario_docs(repo_root)?;
@@ -115,10 +115,10 @@ pub(crate) fn check_plan(repo_root: &Path) -> Result<()> {
     // corresponding MD documentation.
     let converge_note_re = Regex::new(r"Short converged|Short form|Converged short|prelude.*top|converged short form|# \(prelude|Short converged form").context("compile converge note re")?;
     for id in &implemented {
-        let path = repo_root.join(format!("docs/development/integration-scenarios/{id}.md"));
+        let path = repo_root.join(format!("docs/development/integration/integration-scenarios/{id}.md"));
         if !path.is_file() {
             failures.push(format!(
-                "Rust-implemented scenario {id} has no docs/development/integration-scenarios/{id}.md"
+                "Rust-implemented scenario {id} has no docs/development/integration/integration-scenarios/{id}.md"
             ));
             continue;
         }
@@ -174,7 +174,7 @@ pub(crate) fn check_plan(repo_root: &Path) -> Result<()> {
     }
 
     for id in &yaml_ids {
-        let path = PathBuf::from(format!("docs/development/integration-scenarios/{id}.md"));
+        let path = PathBuf::from(format!("docs/development/integration/integration-scenarios/{id}.md"));
         if !repo_root.join(&path).is_file() {
             failures.push(format!(
                 "yaml scenario {id} has no matching file {}",

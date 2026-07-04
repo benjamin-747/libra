@@ -135,7 +135,7 @@ batch document.
 ## Hooks
 
 - Stock Git hooks at `.git/hooks` / `core.hooksPath`: `unsupported` (see [docs/development/commands/_compatibility.md#d3-git-hooks-bridge-作为核心特性](docs/development/commands/_compatibility.md#d3-git-hooks-bridge-作为核心特性))
-- AI provider hooks: `intentionally-different` (see [docs/development/commands/agent.md](docs/development/commands/agent.md))
+- AI provider hooks: `intentionally-different` (see [docs/development/tracing/agent.md](docs/development/tracing/agent.md))
 
 ## LFS compatibility notes
 

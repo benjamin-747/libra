@@ -8,7 +8,7 @@ pub(crate) type ScenarioFn = fn(&mut ScenarioCtx<'_>) -> Result<()>;
 ///
 /// To add a new scenario (see integration-test-plan.md §2.4 and AGENTS.md):
 ///
-/// 1. Register in docs/development/integration-scenarios.yaml and docs/development/integration-scenarios/<id>.md.
+/// 1. Register in docs/development/integration/integration-scenarios/integration-scenarios.yaml and docs/development/integration/integration-scenarios/<id>.md.
 /// 2. Implement `fn scenario_xxx(ctx: &mut ScenarioCtx) -> Result<()> { ... }` in src/scenarios/<id>.rs.
 /// 3. Add `("cli.xxx", scenario_xxx),` to `scenario_registry()` below.
 ///

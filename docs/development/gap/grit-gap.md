@@ -609,8 +609,8 @@ gantt
 **可能改动文件**：
 - `docs/development/commands/grit-gap.md`
 - `docs/development/commands/<cmd>.md`
-- `docs/development/integration-scenarios.yaml`
-- `docs/development/integration-scenarios/<id>.md`
+- `docs/development/integration/integration-scenarios/integration-scenarios.yaml`
+- `docs/development/integration/integration-scenarios/<id>.md`
 - `tools/integration-runner/src/scenarios/<id>.rs`
 - `tools/integration-runner/src/registry.rs`
 - `tests/command/<cmd>_test.rs`
@@ -688,8 +688,8 @@ gantt
 - `docs/commands/fetch.md`
 - `docs/commands/remote.md`
 - `COMPATIBILITY.md`
-- `docs/development/integration-scenarios.yaml`
-- `docs/development/integration-test-plan.md`
+- `docs/development/integration/integration-scenarios/integration-scenarios.yaml`
+- `docs/development/integration/integration-test-plan.md`
 
 **验收标准**：
 - [ ] `libra fetch -p` / `--prune` 删除已不存在于远端的 `refs/remotes/<remote>/*`，并记录可审计输出。

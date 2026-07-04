@@ -1,7 +1,7 @@
 //! Implements restore flows to reset files or entire trees from commits or the index, respecting pathspecs and staged vs worktree targets.
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeSet, HashMap, HashSet},
     fs, io,
     path::{Path, PathBuf},
 };
@@ -34,9 +34,7 @@ use crate::{
         lfs,
         object_ext::{BlobExt, CommitExt, TreeExt},
         output::{OutputConfig, emit_json_data},
-        path,
-        path_ext::PathExt,
-        util,
+        path, util,
     },
 };
 
@@ -594,61 +592,34 @@ async fn restore_worktree_tracked(
     overlay: bool,
 ) -> Result<(Vec<String>, Vec<String>), RestoreError> {
     let target_map = preprocess_blobs(target_blobs);
-    // This set holds source paths that are MISSING from the worktree — they must
-    // be (re)created in BOTH modes. Overlay only suppresses *removal* of paths
-    // present in the worktree but absent from the source (gated below); it still
-    // creates/updates everything the source provides.
-    let deleted_files = get_worktree_deleted_files_in_filters(filter, &target_map);
-
-    for path in filter {
-        if !path.exists()
-            && !target_map
-                .iter()
-                .any(|(p, _)| util::is_sub_path(p.workdir_to_absolute(), path))
-        {
-            return Err(pathspec_not_matched(path));
-        }
-    }
-
-    let mut file_paths =
-        util::integrate_pathspec(filter).map_err(|_| RestoreError::ReadWorktree)?;
-    file_paths.extend(deleted_files);
-    // `integrate_pathspec` inserts a *deleted* directory pathspec verbatim (a
-    // missing path is not `is_dir()`), so a bare directory placeholder can land
-    // in `file_paths`. Restoring its children recreates the directory, after
-    // which hashing the bare entry as a blob would panic. Keep only entries that
-    // name a real source blob or an existing worktree file; the directory's
-    // actual files arrive via the `deleted_files` discovery set above.
-    file_paths.retain(|p| target_map.contains_key(p) || util::workdir_to_absolute(p).is_file());
-
     let index = Index::load(path::index()).map_err(|_| RestoreError::ReadIndex)?;
+    let file_paths = collect_restore_worktree_paths(filter, &target_map, &index)?;
     let mut restored = Vec::new();
     let mut deleted = Vec::new();
 
     for path_wd in &file_paths {
         let path_abs = util::workdir_to_absolute(path_wd);
+        let path_wd_str = path_to_utf8_typed(path_wd)?;
+        let tracked = index.tracked(path_wd_str, 0);
         if !path_abs.exists() {
             if let Some(target) = target_map.get(path_wd) {
                 restore_to_file_typed(&target.hash, path_wd).await?;
                 apply_worktree_target_mode(&path_abs, target.mode)?;
                 restored.push(path_wd.display().to_string());
-            } else {
+            } else if !tracked {
                 return Err(pathspec_not_matched(path_wd));
             }
-        } else {
-            let path_wd_str = path_to_utf8_typed(path_wd)?;
+        } else if let Some(target) = target_map.get(path_wd) {
             let hash = calc_file_blob_hash(&path_abs).map_err(|_| RestoreError::ReadObject)?;
-            if let Some(target) = target_map.get(path_wd) {
-                if hash != target.hash {
-                    restore_to_file_typed(&target.hash, path_wd).await?;
-                    restored.push(path_wd.display().to_string());
-                }
-                apply_worktree_target_mode(&path_abs, target.mode)?;
-            } else if !overlay && index.tracked(path_wd_str, 0) {
-                fs::remove_file(&path_abs).map_err(|_| RestoreError::WriteWorktree)?;
-                util::clear_empty_dir(&path_abs);
-                deleted.push(path_wd.display().to_string());
+            if hash != target.hash {
+                restore_to_file_typed(&target.hash, path_wd).await?;
+                restored.push(path_wd.display().to_string());
             }
+            apply_worktree_target_mode(&path_abs, target.mode)?;
+        } else if !overlay && tracked {
+            fs::remove_file(&path_abs).map_err(|_| RestoreError::WriteWorktree)?;
+            util::clear_empty_dir(&path_abs);
+            deleted.push(path_wd.display().to_string());
         }
     }
 
@@ -980,6 +951,36 @@ fn legacy_targets(blobs: &[(PathBuf, ObjectHash)]) -> Vec<(PathBuf, RestoreTarge
         .collect()
 }
 
+fn collect_restore_worktree_paths(
+    filter: &[PathBuf],
+    target_map: &HashMap<PathBuf, RestoreTarget>,
+    index: &Index,
+) -> Result<Vec<PathBuf>, RestoreError> {
+    let tracked_paths = index.tracked_files();
+    for path in filter {
+        if path.exists() {
+            continue;
+        }
+
+        let matches_target = target_map
+            .keys()
+            .any(|p| util::is_sub_path(util::workdir_to_absolute(p), path));
+        let matches_index = tracked_paths
+            .iter()
+            .any(|p| util::is_sub_path(util::workdir_to_absolute(p), path));
+        if !matches_target && !matches_index {
+            return Err(pathspec_not_matched(path));
+        }
+    }
+
+    let filter_vec = filter.to_vec();
+    let target_paths = target_map.keys().cloned().collect::<Vec<_>>();
+    let mut paths = BTreeSet::new();
+    paths.extend(util::filter_to_fit_paths(&target_paths, &filter_vec));
+    paths.extend(util::filter_to_fit_paths(&tracked_paths, &filter_vec));
+    Ok(paths.into_iter().collect())
+}
+
 fn tree_item_mode_to_index_mode(mode: TreeItemMode) -> Option<u32> {
     match mode {
         TreeItemMode::Blob => Some(0o100644),
@@ -1296,20 +1297,6 @@ pub async fn restore_to_file(hash: &ObjectHash, path: &PathBuf) -> io::Result<()
     Ok(())
 }
 
-fn get_worktree_deleted_files_in_filters(
-    filters: &[PathBuf],
-    target_blobs: &HashMap<PathBuf, RestoreTarget>,
-) -> HashSet<PathBuf> {
-    target_blobs
-        .iter()
-        .filter(|(path, _)| {
-            let path = util::workdir_to_absolute(path);
-            !path.exists() && path.sub_of_paths(filters)
-        })
-        .map(|(path, _)| path.clone())
-        .collect()
-}
-
 // ── Legacy worktree/index restore (kept for execute_checked) ─────────
 
 pub async fn restore_worktree(
@@ -1318,53 +1305,31 @@ pub async fn restore_worktree(
 ) -> io::Result<()> {
     let target_blobs = legacy_targets(target_blobs);
     let target_blobs = preprocess_blobs(&target_blobs);
-    let deleted_files = get_worktree_deleted_files_in_filters(filter, &target_blobs);
-
-    {
-        for path in filter {
-            if !path.exists()
-                && !target_blobs
-                    .iter()
-                    .any(|(p, _)| util::is_sub_path(p.workdir_to_absolute(), path))
-            {
-                return Err(io::Error::other(format!(
-                    "pathspec '{}' did not match any files",
-                    path.display()
-                )));
-            }
-        }
-    }
-
-    let mut file_paths = util::integrate_pathspec(filter)?;
-    file_paths.extend(deleted_files);
-    // Drop bare deleted-directory placeholders so recreating their children does
-    // not leave a directory entry that would later be hashed as a blob (panic).
-    file_paths.retain(|p| target_blobs.contains_key(p) || util::workdir_to_absolute(p).is_file());
-
     let index = Index::load(path::index()).map_err(|e| io::Error::other(e.to_string()))?;
+    let file_paths = collect_restore_worktree_paths(filter, &target_blobs, &index)
+        .map_err(|error| io::Error::other(error.to_string()))?;
     for path_wd in &file_paths {
         let path_abs = util::workdir_to_absolute(path_wd);
+        let path_wd_str = path_to_utf8(path_wd)?;
+        let tracked = index.tracked(path_wd_str, 0);
         if !path_abs.exists() {
             if let Some(target) = target_blobs.get(path_wd) {
                 restore_to_file(&target.hash, path_wd).await?;
-            } else {
+            } else if !tracked {
                 return Err(io::Error::other(format!(
                     "pathspec '{}' did not match any files",
                     path_wd.display()
                 )));
             }
-        } else {
-            let path_wd_str = path_to_utf8(path_wd)?;
+        } else if let Some(target) = target_blobs.get(path_wd) {
             let hash =
                 calc_file_blob_hash(&path_abs).map_err(|e| io::Error::other(e.to_string()))?;
-            if target_blobs.contains_key(path_wd) {
-                if hash != target_blobs[path_wd].hash {
-                    restore_to_file(&target_blobs[path_wd].hash, path_wd).await?;
-                }
-            } else if index.tracked(path_wd_str, 0) {
-                fs::remove_file(&path_abs)?;
-                util::clear_empty_dir(&path_abs);
+            if hash != target.hash {
+                restore_to_file(&target.hash, path_wd).await?;
             }
+        } else if tracked {
+            fs::remove_file(&path_abs)?;
+            util::clear_empty_dir(&path_abs);
         }
     }
     Ok(())
@@ -1376,45 +1341,26 @@ async fn restore_worktree_legacy_typed(
 ) -> Result<(), RestoreError> {
     let target_blobs = legacy_targets(target_blobs);
     let target_blobs = preprocess_blobs(&target_blobs);
-    let deleted_files = get_worktree_deleted_files_in_filters(filter, &target_blobs);
-
-    for path in filter {
-        if !path.exists()
-            && !target_blobs
-                .iter()
-                .any(|(p, _)| util::is_sub_path(p.workdir_to_absolute(), path))
-        {
-            return Err(pathspec_not_matched(path));
-        }
-    }
-
-    let mut file_paths =
-        util::integrate_pathspec(filter).map_err(|_| RestoreError::ReadWorktree)?;
-    file_paths.extend(deleted_files);
-    // Drop bare deleted-directory placeholders so recreating their children does
-    // not leave a directory entry that would later be hashed as a blob (panic).
-    file_paths.retain(|p| target_blobs.contains_key(p) || util::workdir_to_absolute(p).is_file());
-
     let index = Index::load(path::index()).map_err(|_| RestoreError::ReadIndex)?;
+    let file_paths = collect_restore_worktree_paths(filter, &target_blobs, &index)?;
     for path_wd in &file_paths {
         let path_abs = util::workdir_to_absolute(path_wd);
+        let path_wd_str = path_to_utf8_typed(path_wd)?;
+        let tracked = index.tracked(path_wd_str, 0);
         if !path_abs.exists() {
             if let Some(target) = target_blobs.get(path_wd) {
                 restore_to_file_typed(&target.hash, path_wd).await?;
-            } else {
+            } else if !tracked {
                 return Err(pathspec_not_matched(path_wd));
             }
-        } else {
-            let path_wd_str = path_to_utf8_typed(path_wd)?;
+        } else if let Some(target) = target_blobs.get(path_wd) {
             let hash = calc_file_blob_hash(&path_abs).map_err(|_| RestoreError::ReadObject)?;
-            if target_blobs.contains_key(path_wd) {
-                if hash != target_blobs[path_wd].hash {
-                    restore_to_file_typed(&target_blobs[path_wd].hash, path_wd).await?;
-                }
-            } else if index.tracked(path_wd_str, 0) {
-                fs::remove_file(&path_abs).map_err(|_| RestoreError::WriteWorktree)?;
-                util::clear_empty_dir(&path_abs);
+            if hash != target.hash {
+                restore_to_file_typed(&target.hash, path_wd).await?;
             }
+        } else if tracked {
+            fs::remove_file(&path_abs).map_err(|_| RestoreError::WriteWorktree)?;
+            util::clear_empty_dir(&path_abs);
         }
     }
 

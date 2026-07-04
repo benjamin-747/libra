@@ -418,7 +418,7 @@ impl Renderer {
         }
 
         let wrapped = wrap_segments(
-            self.current_segments.drain(..).collect(),
+            std::mem::take(&mut self.current_segments),
             self.width,
             &prefixes,
         );

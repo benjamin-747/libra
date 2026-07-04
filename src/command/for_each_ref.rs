@@ -2347,10 +2347,9 @@ fn short_refname(refname: &str) -> String {
 fn refname_strip_atom(token: &str, refname: &str) -> Option<String> {
     let (from_left, num) = if let Some(n) = token.strip_prefix("refname:lstrip=") {
         (true, n)
-    } else if let Some(n) = token.strip_prefix("refname:rstrip=") {
-        (false, n)
     } else {
-        return None;
+        let n = token.strip_prefix("refname:rstrip=")?;
+        (false, n)
     };
     Some(strip_ref_components(refname, from_left, num.parse().ok()?))
 }

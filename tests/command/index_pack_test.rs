@@ -331,9 +331,11 @@ fn parse_idx_v2(bytes: &[u8], kind: HashKind) -> ParsedIdxV2 {
     let offsets = &bytes[cursor..offsets_end];
     cursor = offsets_end;
 
-    let large_count = offsets
-        .chunks_exact(4)
-        .filter(|raw| u32::from_be_bytes((*raw).try_into().unwrap()) & 0x8000_0000 != 0)
+    let (offset_chunks, offset_remainder) = offsets.as_chunks::<4>();
+    assert!(offset_remainder.is_empty(), "idx v2 offsets are truncated");
+    let large_count = offset_chunks
+        .iter()
+        .filter(|raw| u32::from_be_bytes(**raw) & 0x8000_0000 != 0)
         .count();
     let large_offsets_end = cursor + large_count * 8;
     assert!(
@@ -341,8 +343,14 @@ fn parse_idx_v2(bytes: &[u8], kind: HashKind) -> ParsedIdxV2 {
         "idx v2 large offsets or trailer are truncated"
     );
     let mut large_offsets = Vec::with_capacity(large_count);
-    for chunk in bytes[cursor..large_offsets_end].chunks_exact(8) {
-        large_offsets.push(u64::from_be_bytes(chunk.try_into().unwrap()));
+    let (large_offset_chunks, large_offset_remainder) =
+        bytes[cursor..large_offsets_end].as_chunks::<8>();
+    assert!(
+        large_offset_remainder.is_empty(),
+        "idx v2 large offsets are truncated"
+    );
+    for chunk in large_offset_chunks {
+        large_offsets.push(u64::from_be_bytes(*chunk));
     }
     cursor = large_offsets_end;
 

@@ -133,19 +133,24 @@ pub mod switch;
 pub mod web_assets;
 pub mod write_tree;
 
-use std::{io, io::Write, path::Path};
+use std::{
+    fs::File,
+    io::{self, Read, Write},
+    path::Path,
+};
 
 use git_internal::{
     errors::GitError,
     hash::ObjectHash,
     internal::object::{ObjectTrait, blob::Blob},
+    utils::HashAlgorithm,
 };
 use rpassword::read_password;
 
 use crate::{
     internal::protocol::https_client::BasicAuth,
     utils,
-    utils::{client_storage::ClientStorage, error::emit_warning, object_ext::BlobExt, util},
+    utils::{client_storage::ClientStorage, error::emit_warning, util},
 };
 
 // impl load for all objects
@@ -253,13 +258,35 @@ pub fn ask_basic_auth() -> BasicAuth {
 /// Calculate the hash of a file blob
 /// - for `lfs` file: calculate hash of the pointer data
 pub fn calc_file_blob_hash(path: impl AsRef<Path>) -> io::Result<ObjectHash> {
-    let blob = if utils::lfs::is_lfs_tracked(&path) {
+    if utils::lfs::is_lfs_tracked(&path) {
         let (pointer, _) = utils::lfs::generate_pointer_file(&path);
-        Blob::from_content(&pointer)
-    } else {
-        Blob::from_file(&path)
-    };
-    Ok(blob.id)
+        return Ok(Blob::from_content(&pointer).id);
+    }
+
+    stream_file_blob_hash(path)
+}
+
+fn stream_file_blob_hash(path: impl AsRef<Path>) -> io::Result<ObjectHash> {
+    let path = path.as_ref();
+    let file = File::open(path)?;
+    let len = file.metadata()?.len();
+    let mut reader = io::BufReader::new(file);
+    let mut hasher = HashAlgorithm::new();
+
+    hasher.update(b"blob ");
+    hasher.update(len.to_string().as_bytes());
+    hasher.update(b"\0");
+
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+
+    ObjectHash::from_bytes(&hasher.finalize()).map_err(io::Error::other)
 }
 
 /// Get the commit hash from branch name or commit hash, support remote branch

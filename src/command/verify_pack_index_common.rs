@@ -9,15 +9,12 @@ pub(super) fn parse_fanout(bytes: &[u8], offset: usize) -> Result<[u32; 256], St
     }
 
     let mut fanout = [0u32; 256];
-    for (slot, chunk) in fanout
-        .iter_mut()
-        .zip(bytes[offset..offset + FANOUT_LEN].chunks_exact(4))
-    {
-        *slot = u32::from_be_bytes(
-            chunk
-                .try_into()
-                .map_err(|_| "truncated fanout entry".to_string())?,
-        );
+    let (chunks, remainder) = bytes[offset..offset + FANOUT_LEN].as_chunks::<4>();
+    if !remainder.is_empty() {
+        return Err("truncated fanout entry".to_string());
+    }
+    for (slot, chunk) in fanout.iter_mut().zip(chunks) {
+        *slot = u32::from_be_bytes(*chunk);
     }
     Ok(fanout)
 }

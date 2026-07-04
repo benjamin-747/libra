@@ -79,6 +79,93 @@ pub const RPC_RESPONSE_CHANNEL_CAPACITY: usize = 64;
 /// exceeds the cap get a typed error before we touch the pipe.
 pub const RPC_MAX_REQUEST_BYTES: usize = 1024 * 1024; // 1 MiB
 
+/// Protocol version this runtime speaks (E2). Injected into the child's
+/// environment as `LIBRA_AGENT_PROTOCOL_VERSION`; binaries answering `info`
+/// with a higher major version are rejected fail-closed
+/// (`LBR-AGENT-003` semantics at the CLI layer).
+pub const RPC_PROTOCOL_VERSION: u32 = 2;
+
+/// Hard cap on captured child stderr (AG-18). Anything past this is
+/// dropped with a truncation marker; stderr is never inherited and never
+/// surfaced raw — only redacted excerpts.
+pub const RPC_MAX_STDERR_BYTES: usize = 64 * 1024;
+
+/// Typed classification for RPC failures (AG-18). Attached to the
+/// `anyhow` chain via `.context(...)` so callers can `downcast_ref`
+/// instead of substring-matching over messages that may embed
+/// child-controlled text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum RpcFailureKind {
+    /// Deadline elapsed; the child was killed (`LBR-AGENT-012`).
+    #[error("rpc timeout")]
+    Timeout,
+    /// A hard IO cap (request/frame/stderr) was violated (`LBR-AGENT-007`).
+    #[error("rpc io cap violation")]
+    IoCap,
+    /// The transport broke (stdout closed, read error) (`LBR-AGENT-012`).
+    #[error("rpc transport failure")]
+    Transport,
+    /// The binary answered with a JSON-RPC error frame; the payload is the
+    /// frame's `error.code` (−32601 = method not found → v1 fallback).
+    #[error("rpc error frame (code {0})")]
+    ErrorFrame(i32),
+    /// Protocol violation (bad JSON, wrong id, wrong jsonrpc version)
+    /// (`LBR-AGENT-012`).
+    #[error("rpc protocol violation")]
+    Protocol,
+    /// The binary negotiated an incompatible protocol version
+    /// (`LBR-AGENT-003`).
+    #[error("rpc protocol version mismatch")]
+    ProtocolVersion,
+}
+
+/// Extract the typed [`RpcFailureKind`] marker from an `anyhow` error.
+///
+/// The marker may sit in the chain in either shape:
+/// - as the **root error** (`Err(RpcFailureKind::Timeout).with_context(..)`),
+///   which `chain()` + `dyn Error::downcast_ref` finds; or
+/// - as a **context layer** (`Err(io_err).context(RpcFailureKind::Transport)`),
+///   which only `anyhow::Error::downcast_ref` finds — `chain()` yields the
+///   wrapping `ContextError`, whose concrete type never matches.
+///
+/// Checking only one shape silently drops the classification for the
+/// other (the CLI then falls back to `LBR-INTERNAL-001`), so both are
+/// consulted.
+pub fn rpc_failure_kind(error: &anyhow::Error) -> Option<RpcFailureKind> {
+    if let Some(kind) = error.downcast_ref::<RpcFailureKind>() {
+        return Some(*kind);
+    }
+    error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<RpcFailureKind>().copied())
+}
+
+/// v2 `info` response (E2). `protocol_version` is optional on the wire —
+/// a missing value means the binary is a v1 speaker.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AgentInfo {
+    #[serde(default)]
+    pub protocol_version: Option<u32>,
+    pub name: String,
+    #[serde(rename = "type", default)]
+    pub agent_type: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub is_preview: bool,
+    #[serde(default)]
+    pub protected_dirs: Vec<String>,
+    #[serde(default)]
+    pub protected_files: Vec<String>,
+    #[serde(default)]
+    pub hook_names: Vec<String>,
+    /// E1 8-bool capability object. NOTE: same *name* as the v1
+    /// `capabilities` method but a different wire shape (`{methods:[..]}`)
+    /// — do not conflate the two.
+    #[serde(default)]
+    pub capabilities: super::capability::DeclaredAgentCaps,
+}
+
 /// Discovered binary plus its launch path. The runtime owns one of
 /// these per binary; capability negotiation happens lazily on first
 /// invocation.
@@ -116,6 +203,14 @@ pub struct RpcAgent {
     /// Once populated, the runtime refuses to call any method outside
     /// this set.
     capabilities: Mutex<Option<Vec<String>>>,
+    /// Cached v2 `info` response (None until negotiated; also None for
+    /// pure-v1 binaries that lack the method).
+    info: Mutex<Option<AgentInfo>>,
+    /// Captured child stderr, capped at [`RPC_MAX_STDERR_BYTES`] (AG-18:
+    /// stderr is never inherited; only redacted excerpts may surface).
+    stderr_buf: std::sync::Arc<Mutex<Vec<u8>>>,
+    stderr_truncated: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    stderr_handle: Option<JoinHandle<()>>,
 }
 
 /// One JSON-RPC request frame. `id` is monotonic per binary; the
@@ -160,17 +255,43 @@ impl RpcAgent {
     /// into a bounded sync channel so the timeout in `invoke` can
     /// actually fire on a non-responsive child.
     pub fn spawn(binary: RpcAgentBinary) -> Result<Self> {
-        let child = Command::new(&binary.binary_path)
+        Self::spawn_in_repo(binary, None)
+    }
+
+    /// [`Self::spawn`] with an explicit repository root exported to the
+    /// child as `LIBRA_REPO_ROOT`.
+    ///
+    /// Security contract (AG-18 / E2): the child environment is cleared
+    /// and ONLY the allowlisted `LIBRA_AGENT_PROTOCOL_VERSION`,
+    /// `LIBRA_CLI_VERSION` and (when given) `LIBRA_REPO_ROOT` variables
+    /// are injected — provider API keys, `LIBRA_STORAGE_*`, `LIBRA_D1_*`
+    /// and the rest of the parent environment never reach the binary.
+    /// Stderr is piped into a capped in-memory buffer (never inherited);
+    /// use [`Self::redacted_stderr_excerpt`] for diagnostics.
+    pub fn spawn_in_repo(
+        binary: RpcAgentBinary,
+        repo_root: Option<&std::path::Path>,
+    ) -> Result<Self> {
+        let mut command = Command::new(&binary.binary_path);
+        command
+            .env_clear()
+            .env(
+                "LIBRA_AGENT_PROTOCOL_VERSION",
+                RPC_PROTOCOL_VERSION.to_string(),
+            )
+            .env("LIBRA_CLI_VERSION", env!("CARGO_PKG_VERSION"))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .with_context(|| {
-                format!(
-                    "spawn libra-agent binary at {}",
-                    binary.binary_path.display()
-                )
-            })?;
+            .stderr(Stdio::piped());
+        if let Some(root) = repo_root {
+            command.env("LIBRA_REPO_ROOT", root);
+        }
+        let child = command.spawn().with_context(|| {
+            format!(
+                "spawn libra-agent binary at {}",
+                binary.binary_path.display()
+            )
+        })?;
 
         // RAII guard: if anything below `?`s out, drop kills+reaps
         // the child so we never leak a running process. On the
@@ -179,6 +300,7 @@ impl RpcAgent {
         let mut guard = ChildReapGuard { child: Some(child) };
         let stdin;
         let stdout;
+        let stderr;
         {
             // Borrow the child through the guard for stdin/stdout
             // extraction so an early ? still triggers reaping.
@@ -198,6 +320,10 @@ impl RpcAgent {
                     .take()
                     .ok_or_else(|| anyhow!("child {} closed stdout unexpectedly", binary.slug))?,
             );
+            stderr = child_ref
+                .stderr
+                .take()
+                .ok_or_else(|| anyhow!("child {} closed stderr unexpectedly", binary.slug))?;
         }
         let (tx, response_rx) = mpsc::sync_channel::<Result<String>>(RPC_RESPONSE_CHANNEL_CAPACITY);
         let reader_slug = binary.slug.clone();
@@ -205,6 +331,16 @@ impl RpcAgent {
             .name(format!("libra-rpc-reader-{}", reader_slug))
             .spawn(move || pump_stdout_lines(stdout, tx, &reader_slug))
             .context("spawn RPC reader thread")?;
+        let stderr_buf = std::sync::Arc::new(Mutex::new(Vec::new()));
+        let stderr_truncated = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stderr_handle = thread::Builder::new()
+            .name(format!("libra-rpc-stderr-{}", binary.slug))
+            .spawn({
+                let buf = std::sync::Arc::clone(&stderr_buf);
+                let truncated = std::sync::Arc::clone(&stderr_truncated);
+                move || pump_stderr_capped(stderr, &buf, &truncated)
+            })
+            .context("spawn RPC stderr capture thread")?;
         let child = guard.child.take().ok_or_else(|| {
             anyhow!(
                 "internal error: child reap guard for {} was empty after stdio extraction",
@@ -220,7 +356,47 @@ impl RpcAgent {
             reader_handle: Some(reader_handle),
             next_id: AtomicU64::new(1),
             capabilities: Mutex::new(None),
+            info: Mutex::new(None),
+            stderr_buf,
+            stderr_truncated,
+            stderr_handle: Some(stderr_handle),
         })
+    }
+
+    /// A short, redacted, control-sequence-free excerpt of the child's
+    /// captured stderr for diagnostics. Never returns raw bytes: the
+    /// buffer is capped at [`RPC_MAX_STDERR_BYTES`], run through the
+    /// default [`super::redaction::Redactor`], and ANSI/control
+    /// characters are stripped so a hostile binary cannot inject
+    /// terminal escapes. Returns `None` when nothing was written.
+    pub fn redacted_stderr_excerpt(&self) -> Option<String> {
+        let buf = self.stderr_buf.lock().ok()?;
+        if buf.is_empty() {
+            return None;
+        }
+        let redactor = super::redaction::Redactor::new_default();
+        let (redacted, _report) = redactor.redact(&buf);
+        let mut clean: String = String::from_utf8_lossy(redacted.as_ref())
+            .chars()
+            .map(|c| {
+                if c.is_control() && c != '\n' && c != '\t' {
+                    '\u{FFFD}'
+                } else {
+                    c
+                }
+            })
+            .collect();
+        const EXCERPT_CHARS: usize = 2048;
+        if clean.chars().count() > EXCERPT_CHARS {
+            clean = clean.chars().take(EXCERPT_CHARS).collect::<String>() + "…[excerpt truncated]";
+        }
+        if self
+            .stderr_truncated
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            clean.push_str(" [stderr capped at 64 KiB]");
+        }
+        Some(clean)
     }
 
     /// Send a JSON-RPC request and wait for the matching response,
@@ -243,7 +419,10 @@ impl RpcAgent {
         params: Option<Value>,
         timeout: Duration,
     ) -> Result<Value> {
-        if method != "capabilities" {
+        // `capabilities` (v1) and `info` (v2) are the negotiation
+        // bootstrap methods — everything else is capability-gated
+        // fail-closed (E1/E2; `LBR-AGENT-004` semantics upstream).
+        if method != "capabilities" && method != "info" {
             let caps = self.capabilities.lock().map_err(|_| {
                 anyhow!(
                     "RPC capabilities mutex for {} was poisoned by an earlier panic",
@@ -262,6 +441,17 @@ impl RpcAgent {
                 _ => {}
             }
         }
+        let span_protocol_version = self.negotiated_protocol_version();
+        let invoke_span = tracing::info_span!(
+            "agent.rpc.invoke",
+            slug = %self.binary.slug,
+            method = %method,
+            protocol_version = span_protocol_version,
+            timeout_ms = timeout.as_millis() as u64,
+            frame_bytes = tracing::field::Empty,
+            terminal_state = tracing::field::Empty,
+        );
+        let _entered = invoke_span.enter();
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let request = RpcRequest {
             jsonrpc: "2.0",
@@ -276,23 +466,37 @@ impl RpcAgent {
         // child's stdin pipe. See [`RPC_MAX_REQUEST_BYTES`] docs
         // for the v1 contract limits.
         if line.len() + 1 > RPC_MAX_REQUEST_BYTES {
-            bail!(
-                "RPC request for '{method}' against {} is {} bytes, exceeds limit of {} bytes",
-                self.binary.slug,
-                line.len() + 1,
-                RPC_MAX_REQUEST_BYTES
-            );
+            invoke_span.record("frame_bytes", 0_u64);
+            invoke_span.record("terminal_state", "io_cap");
+            return Err(RpcFailureKind::IoCap).with_context(|| {
+                format!(
+                    "RPC request for '{method}' against {} is {} bytes, exceeds limit of {} bytes",
+                    self.binary.slug,
+                    line.len() + 1,
+                    RPC_MAX_REQUEST_BYTES
+                )
+            });
         }
         // Write request line + LF terminator.
-        writeln!(self.stdin, "{line}").with_context(|| {
-            format!(
-                "write RPC request to {} stdin (likely the child died)",
-                self.binary.slug
-            )
-        })?;
-        self.stdin
-            .flush()
-            .with_context(|| format!("flush RPC request to {} stdin", self.binary.slug))?;
+        if let Err(err) = writeln!(self.stdin, "{line}") {
+            invoke_span.record("frame_bytes", 0_u64);
+            invoke_span.record("terminal_state", "error");
+            return Err(err)
+                .context(RpcFailureKind::Transport)
+                .with_context(|| {
+                    format!(
+                        "write RPC request to {} stdin (likely the child died)",
+                        self.binary.slug
+                    )
+                });
+        }
+        if let Err(err) = self.stdin.flush() {
+            invoke_span.record("frame_bytes", 0_u64);
+            invoke_span.record("terminal_state", "error");
+            return Err(err)
+                .context(RpcFailureKind::Transport)
+                .with_context(|| format!("flush RPC request to {} stdin", self.binary.slug));
+        }
 
         // Read responses through the dedicated reader thread's
         // channel. `recv_timeout` lets us enforce the deadline even
@@ -303,70 +507,183 @@ impl RpcAgent {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 let _ = self.child.kill();
-                bail!(
-                    "RPC method '{method}' against {} timed out after {:?}",
-                    self.binary.slug,
-                    timeout
-                );
+                invoke_span.record("frame_bytes", 0_u64);
+                invoke_span.record("terminal_state", "timeout");
+                return Err(RpcFailureKind::Timeout).with_context(|| {
+                    format!(
+                        "RPC method '{method}' against {} timed out after {:?}{}",
+                        self.binary.slug,
+                        timeout,
+                        self.stderr_suffix()
+                    )
+                });
             }
             let line = match self.response_rx.recv_timeout(remaining) {
                 Ok(Ok(line)) => line,
                 Ok(Err(err)) => {
+                    invoke_span.record("frame_bytes", 0_u64);
+                    invoke_span.record("terminal_state", "error");
                     return Err(err)
                         .with_context(|| format!("read RPC response from {}", self.binary.slug));
                 }
                 Err(RecvTimeoutError::Timeout) => {
                     let _ = self.child.kill();
-                    bail!(
-                        "RPC method '{method}' against {} timed out after {:?}",
-                        self.binary.slug,
-                        timeout
-                    );
+                    invoke_span.record("frame_bytes", 0_u64);
+                    invoke_span.record("terminal_state", "timeout");
+                    return Err(RpcFailureKind::Timeout).with_context(|| {
+                        format!(
+                            "RPC method '{method}' against {} timed out after {:?}{}",
+                            self.binary.slug,
+                            timeout,
+                            self.stderr_suffix()
+                        )
+                    });
                 }
                 Err(RecvTimeoutError::Disconnected) => {
-                    bail!(
-                        "RPC binary {} closed stdout before answering '{method}'",
-                        self.binary.slug
-                    );
+                    invoke_span.record("frame_bytes", 0_u64);
+                    invoke_span.record("terminal_state", "error");
+                    return Err(RpcFailureKind::Transport).with_context(|| {
+                        format!(
+                            "RPC binary {} closed stdout before answering '{method}'{}",
+                            self.binary.slug,
+                            self.stderr_suffix()
+                        )
+                    });
                 }
             };
             if line.is_empty() {
                 continue;
             }
-            let resp: RpcResponse = serde_json::from_str(&line).with_context(|| {
-                format!("parse RPC response line from {}: {line}", self.binary.slug)
-            })?;
+            let resp: RpcResponse = match serde_json::from_str(&line) {
+                Ok(resp) => resp,
+                Err(err) => {
+                    invoke_span.record("frame_bytes", line.len() as u64);
+                    invoke_span.record("terminal_state", "error");
+                    return Err(err).context(RpcFailureKind::Protocol).with_context(|| {
+                        format!("parse RPC response line from {}: {line}", self.binary.slug)
+                    });
+                }
+            };
             if resp.jsonrpc != "2.0" {
-                bail!(
-                    "RPC binary {} returned unsupported jsonrpc version {:?} (expected \"2.0\")",
-                    self.binary.slug,
-                    resp.jsonrpc
-                );
+                invoke_span.record("frame_bytes", line.len() as u64);
+                invoke_span.record("terminal_state", "error");
+                return Err(RpcFailureKind::Protocol).with_context(|| {
+                    format!(
+                        "RPC binary {} returned unsupported jsonrpc version {:?} (expected \"2.0\")",
+                        self.binary.slug, resp.jsonrpc
+                    )
+                });
             }
             if resp.id != id {
                 // v1 is strictly synchronous: we never have a second
                 // request in flight, so any other id is the binary
                 // breaking the protocol — surface it instead of
                 // burning the deadline waiting for the right id.
-                bail!(
-                    "RPC binary {} returned response for id {} while waiting for id {} (method '{method}')",
-                    self.binary.slug,
-                    resp.id,
-                    id
-                );
+                invoke_span.record("frame_bytes", line.len() as u64);
+                invoke_span.record("terminal_state", "error");
+                return Err(RpcFailureKind::Protocol).with_context(|| {
+                    format!(
+                        "RPC binary {} returned response for id {} while waiting for id {} (method '{method}')",
+                        self.binary.slug, resp.id, id
+                    )
+                });
             }
             if let Some(err) = resp.error {
-                bail!(
-                    "RPC method '{method}' against {} returned error {}: {}",
-                    self.binary.slug,
-                    err.code,
-                    err.message
-                );
+                invoke_span.record("frame_bytes", line.len() as u64);
+                invoke_span.record("terminal_state", "rpc_error");
+                return Err(RpcFailureKind::ErrorFrame(err.code)).with_context(|| {
+                    format!(
+                        "RPC method '{method}' against {} returned error {}: {}",
+                        self.binary.slug, err.code, err.message
+                    )
+                });
             }
+            invoke_span.record("frame_bytes", line.len() as u64);
+            invoke_span.record("terminal_state", "ok");
             return resp.result.ok_or_else(|| {
                 anyhow!("RPC response for '{method}' had neither result nor error")
             });
         }
+    }
+
+    /// Redacted stderr suffix for error messages (empty when the child
+    /// wrote nothing).
+    fn stderr_suffix(&self) -> String {
+        match self.redacted_stderr_excerpt() {
+            Some(excerpt) => format!("; child stderr (redacted): {excerpt}"),
+            None => String::new(),
+        }
+    }
+
+    /// Protocol version negotiated via `info`, defaulting to 1 (a binary
+    /// that never answered `info` is treated as a v1 speaker per E2).
+    pub fn negotiated_protocol_version(&self) -> u32 {
+        self.info
+            .lock()
+            .ok()
+            .and_then(|guard| {
+                guard
+                    .as_ref()
+                    .map(|info| info.protocol_version.unwrap_or(1))
+            })
+            .unwrap_or(1)
+    }
+
+    /// Cached v2 `info` payload, when the binary provided one.
+    pub fn negotiated_info(&self) -> Option<AgentInfo> {
+        self.info.lock().ok().and_then(|guard| guard.clone())
+    }
+
+    /// v2 negotiation (E2): try `info` first; a binary that does not
+    /// implement it stays a v1 speaker (`Ok(None)`), per the
+    /// `info -> v1 capabilities -> skip-and-log` client order. A binary
+    /// that answers with an incompatible `protocol_version` is rejected
+    /// fail-closed (`LBR-AGENT-003` semantics at the CLI layer).
+    pub fn negotiate_info(&mut self) -> Result<Option<AgentInfo>> {
+        let value = match self.invoke("info", None) {
+            Ok(value) => value,
+            // Strict v1 fallback: ONLY JSON-RPC "method not found"
+            // (−32601) downgrades to v1. Timeouts, IO-cap violations,
+            // transport breaks and protocol violations must propagate
+            // fail-closed instead of silently degrading.
+            Err(err)
+                if matches!(
+                    rpc_failure_kind(&err),
+                    Some(RpcFailureKind::ErrorFrame(-32601))
+                ) =>
+            {
+                return Ok(None);
+            }
+            Err(err) => {
+                return Err(err).with_context(|| {
+                    format!("`info` negotiation against {} failed", self.binary.slug)
+                });
+            }
+        };
+        let info: AgentInfo = serde_json::from_value(value).with_context(|| {
+            format!(
+                "parse `info` response from {} (E2 v2 contract)",
+                self.binary.slug
+            )
+        })?;
+        let version = info.protocol_version.unwrap_or(1);
+        if version > RPC_PROTOCOL_VERSION {
+            return Err(RpcFailureKind::ProtocolVersion).with_context(|| {
+                format!(
+                    "binary {} speaks protocol version {version}, newer than this runtime's {} — \
+                     refusing fail-closed (upgrade libra or downgrade the agent binary)",
+                    self.binary.slug, RPC_PROTOCOL_VERSION
+                )
+            });
+        }
+        let mut guard = self.info.lock().map_err(|_| {
+            anyhow!(
+                "RPC info mutex for {} was poisoned by an earlier panic",
+                self.binary.slug
+            )
+        })?;
+        *guard = Some(info.clone());
+        Ok(Some(info))
     }
 
     /// Mandatory first call. Asks the binary for the set of methods
@@ -483,6 +800,18 @@ impl Drop for RpcAgent {
             }
             // else: detach. Drop returns; process exit will reap.
         }
+        // The stderr thread exits on EOF (child stderr closed by the
+        // kill/wait above); it never blocks on a channel, so a bounded
+        // join is safe — detach on the same worst-case pipe quirk.
+        if let Some(handle) = self.stderr_handle.take() {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while !handle.is_finished() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            if handle.is_finished() {
+                let _ = handle.join();
+            }
+        }
     }
 }
 
@@ -519,9 +848,11 @@ fn pump_stdout_lines(
             Ok(0) => return,
             Ok(_) => {
                 if buf.len() > RPC_MAX_FRAME_BYTES {
-                    let _ = tx.send(Err(anyhow!(
-                        "libra-agent-{slug} sent a frame larger than {} bytes (DoS guard)",
-                        RPC_MAX_FRAME_BYTES
+                    let _ = tx.send(Err(anyhow::Error::from(RpcFailureKind::IoCap).context(
+                        format!(
+                            "libra-agent-{slug} sent a frame larger than {} bytes (DoS guard)",
+                            RPC_MAX_FRAME_BYTES
+                        ),
                     )));
                     return;
                 }
@@ -534,10 +865,41 @@ fn pump_stdout_lines(
                 }
             }
             Err(err) => {
-                let _ = tx.send(Err(anyhow!(
-                    "read line from libra-agent-{slug} stdout: {err}"
-                )));
+                let _ = tx.send(Err(anyhow::Error::from(RpcFailureKind::Transport)
+                    .context(format!("read line from libra-agent-{slug} stdout: {err}"))));
                 return;
+            }
+        }
+    }
+}
+
+/// Capped stderr pump: appends child stderr bytes to `buf` up to
+/// [`RPC_MAX_STDERR_BYTES`], then keeps draining (so the child never
+/// blocks on a full pipe) while flagging truncation. Raw bytes stay in
+/// memory only; the sole read path is
+/// [`RpcAgent::redacted_stderr_excerpt`].
+fn pump_stderr_capped(
+    mut stderr: std::process::ChildStderr,
+    buf: &Mutex<Vec<u8>>,
+    truncated: &std::sync::atomic::AtomicBool,
+) {
+    use std::io::Read;
+    let mut chunk = [0u8; 4096];
+    loop {
+        match stderr.read(&mut chunk) {
+            Ok(0) | Err(_) => return,
+            Ok(n) => {
+                let Ok(mut guard) = buf.lock() else { return };
+                let room = RPC_MAX_STDERR_BYTES.saturating_sub(guard.len());
+                if room == 0 {
+                    truncated.store(true, std::sync::atomic::Ordering::Relaxed);
+                    continue; // keep draining, drop bytes
+                }
+                let take = room.min(n);
+                guard.extend_from_slice(&chunk[..take]);
+                if take < n {
+                    truncated.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
             }
         }
     }
@@ -548,9 +910,17 @@ fn pump_stdout_lines(
 /// are skipped (the first match wins, matching shell `which`
 /// behaviour).
 ///
+/// Built-in slug impersonation guard (E2 / `LBR-AGENT-006` semantics):
+/// a binary whose slug collides with a built-in [`AgentKind`] CLI slug
+/// (e.g. `libra-agent-claude-code`) is skipped-and-logged — it can never
+/// shadow or override a built-in adapter.
+///
 /// Returns an empty vec when `$PATH` is unset or no binaries match.
 pub fn discover_rpc_agents() -> Vec<RpcAgentBinary> {
     use std::collections::HashSet;
+
+    let discover_span = tracing::info_span!("agent.rpc.discover");
+    let _entered = discover_span.enter();
 
     let Some(path_var) = std::env::var_os("PATH") else {
         return Vec::new();
@@ -572,6 +942,19 @@ pub fn discover_rpc_agents() -> Vec<RpcAgentBinary> {
             if slug.is_empty() {
                 continue;
             }
+            if super::adapter::AgentKind::from_cli_slug(slug).is_some() {
+                // Skip-and-log: never register a PATH binary that
+                // impersonates a built-in agent slug.
+                tracing::warn!(
+                    target: "agent.rpc.discover",
+                    slug,
+                    external_binary = true,
+                    quarantined = true,
+                    reason = "builtin_slug_impersonation",
+                    "skipping libra-agent binary impersonating a built-in agent slug"
+                );
+                continue;
+            }
             // On Unix, only count executable files. Symlinks and
             // non-files are skipped.
             #[cfg(unix)]
@@ -588,6 +971,14 @@ pub fn discover_rpc_agents() -> Vec<RpcAgentBinary> {
                 }
             }
             if seen.insert(slug.to_string()) {
+                tracing::info!(
+                    target: "agent.rpc.discover",
+                    slug,
+                    external_binary = true,
+                    quarantined = true,
+                    reason = "discovered_untrusted_default",
+                    "discovered external libra-agent binary (quarantined until trusted)"
+                );
                 out.push(RpcAgentBinary {
                     slug: slug.to_string(),
                     binary_path: entry.path(),

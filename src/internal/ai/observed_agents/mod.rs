@@ -34,6 +34,7 @@ pub mod preview;
 pub mod redaction;
 pub mod registry;
 pub mod rpc;
+pub mod trust;
 
 pub use adapter::{
     AgentKind, AgentSessionCtx, AgentStability, ObservedAgent, TranscriptChunker,
@@ -63,8 +64,13 @@ pub use registry::{
     supported_slugs,
 };
 pub use rpc::{
-    RPC_BINARY_PREFIX, RPC_DEFAULT_TIMEOUT, RpcAgent, RpcAgentBinary, RpcError, RpcRequest,
-    RpcResponse, discover_rpc_agents,
+    AgentInfo, RPC_BINARY_PREFIX, RPC_DEFAULT_TIMEOUT, RPC_MAX_STDERR_BYTES, RPC_PROTOCOL_VERSION,
+    RpcAgent, RpcAgentBinary, RpcError, RpcRequest, RpcResponse, discover_rpc_agents,
+};
+pub use trust::{
+    EXTERNAL_AGENTS_ENABLED_KEY, Provenance, TrustRecord, compute_provenance,
+    ensure_parent_not_world_writable, external_agents_enabled, read_trust, record_trust,
+    revalidate_trust, revoke_trust,
 };
 
 /// Borrow the static [`ObservedAgent`] for the supplied [`AgentKind`].

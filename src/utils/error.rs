@@ -265,6 +265,13 @@ pub enum StableErrorCode {
     /// without explicit approval (E10 `ERR_AGENT_UNTRUSTED_SEED_FOR_MUTATION`,
     /// AG-22/AG-23).
     AgentUntrustedSeedForMutation,
+    /// External agent RPC transport failed — invoke timeout, broken
+    /// pipe / unexpected exit, or a malformed JSON-RPC frame — and the
+    /// invocation was withheld fail-closed (E10
+    /// `ERR_AGENT_RPC_TRANSPORT_FAILED`, allocated during the AG-18
+    /// implementation slice; distinct from the IO hard-cap / redaction
+    /// failures covered by `LBR-AGENT-007`).
+    AgentRpcTransportFailed,
 }
 
 impl Serialize for StableErrorCode {
@@ -319,6 +326,7 @@ impl StableErrorCode {
             Self::AgentCheckpointStoreInconsistent => "LBR-AGENT-009",
             Self::AgentFixBridgeUnavailable => "LBR-AGENT-010",
             Self::AgentUntrustedSeedForMutation => "LBR-AGENT-011",
+            Self::AgentRpcTransportFailed => "LBR-AGENT-012",
         }
     }
 
@@ -367,7 +375,8 @@ impl StableErrorCode {
             | Self::AgentHookEnvelopeInvalid
             | Self::AgentCheckpointStoreInconsistent
             | Self::AgentFixBridgeUnavailable
-            | Self::AgentUntrustedSeedForMutation => CliErrorCategory::Internal,
+            | Self::AgentUntrustedSeedForMutation
+            | Self::AgentRpcTransportFailed => CliErrorCategory::Internal,
         }
     }
 
@@ -501,6 +510,9 @@ impl StableErrorCode {
             }
             Self::AgentUntrustedSeedForMutation => {
                 "Untrusted seed content cannot enter a mutating workflow without explicit approval."
+            }
+            Self::AgentRpcTransportFailed => {
+                "External agent RPC transport failed (timeout, broken pipe, or malformed frame); invocation withheld fail-closed."
             }
         }
     }
@@ -1553,7 +1565,13 @@ mod tests {
         );
     }
 
+    // Tests asserting DEFAULT exit codes must be `#[serial]`: the
+    // fine-exit-code tests flip the process-global
+    // `LIBRA_FINE_EXIT_CODES` env var under `#[serial]`, and an
+    // unmarked reader running in parallel can observe it mid-flight
+    // (seen as exit code 3 instead of 128 in CI-like parallel runs).
     #[test]
+    #[serial]
     fn unknown_command_has_no_error_prefix() {
         let err =
             CliError::unknown_command("libra: 'wat' is not a libra command. See 'libra --help'.");
@@ -1625,6 +1643,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn stable_code_maps_repo_not_found_to_exit_code_128() {
         let err = CliError::repo_not_found();
         assert_eq!(err.stable_code(), StableErrorCode::RepoNotFound);
@@ -1632,6 +1651,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn stable_code_infers_auth_missing() {
         let err = CliError::fatal("OPENAI_API_KEY is not set");
         assert_eq!(err.stable_code(), StableErrorCode::AuthMissingCredentials);
@@ -1639,6 +1659,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn stable_code_infers_conflict() {
         let err = CliError::fatal("rebase already in progress");
         assert_eq!(err.stable_code(), StableErrorCode::ConflictOperationBlocked);
@@ -1704,6 +1725,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn render_report_appends_json_payload() {
         let rendered = CliError::repo_not_found().render_report();
         assert!(rendered.contains("Error-Code: LBR-REPO-001"));
@@ -1848,6 +1870,7 @@ mod tests {
                 StableErrorCode::AgentUntrustedSeedForMutation,
                 "LBR-AGENT-011",
             ),
+            (StableErrorCode::AgentRpcTransportFailed, "LBR-AGENT-012"),
         ] {
             assert_eq!(variant.as_str(), code);
         }
@@ -1965,7 +1988,7 @@ mod tests {
             StableErrorCode::AgentBudgetExceeded.category(),
             CliErrorCategory::Internal,
         );
-        // E10 agent codes (LBR-AGENT-002..011) all route to Internal —
+        // E10 agent codes (LBR-AGENT-002..012) all route to Internal —
         // per docs/development/tracing/agent.md E10 they must exit 128
         // (runtime category), never 129.
         for variant in [
@@ -1979,6 +2002,7 @@ mod tests {
             StableErrorCode::AgentCheckpointStoreInconsistent,
             StableErrorCode::AgentFixBridgeUnavailable,
             StableErrorCode::AgentUntrustedSeedForMutation,
+            StableErrorCode::AgentRpcTransportFailed,
         ] {
             assert_eq!(variant.category(), CliErrorCategory::Internal);
         }

@@ -47,8 +47,10 @@ libra agent rpc <subcommand>
 | `clean` | 清理已停止会话的临时 checkpoint |
 | `doctor` | 诊断 hook 安装和捕获状态 |
 | `push` | 将 `refs/libra/traces` 推送到远程 |
-| `rpc list` | 列出 `PATH` 上发现的 `libra-agent-*` 二进制文件 |
-| `rpc invoke` | 在某个 `libra-agent-*` 二进制文件上调用一个 JSON-RPC 方法 |
+| `rpc list` | 列出 `PATH` 上发现的 `libra-agent-*` 二进制（含 trusted/quarantined 状态）；需先开启 external-agents 开关 |
+| `rpc trust <slug>` | 信任一个已发现的二进制——记录 path + sha256 + device/inode/mtime 来源（所在目录 world-writable 时拒绝） |
+| `rpc untrust <slug>` | 撤销信任；二进制回到隔离状态（始终可用，不受开关限制） |
+| `rpc invoke` | 在**已信任**的 `libra-agent-*` 二进制上调用一个 JSON-RPC 方法 |
 
 ## 常用选项
 
@@ -150,6 +152,8 @@ libra agent --json status
 `libra agent --help` 会渲染同一横幅，因此文档和 CLI 表面保持同步（跨命令 `--help` EXAMPLES 推出，见 `docs/development/commands/_general.md` 条目 B）。
 
 ## 说明
+
+- 外部 `libra-agent-*` 代理**默认禁用**。使用 `libra config set agent.external_agents.enabled true`（仓库级）显式开启；开启前 `rpc list`/`rpc trust`/`rpc invoke` 会以 `LBR-AGENT-002` 拒绝（`rpc untrust` 始终可用——撤销信任只会收紧安全面）。已发现的二进制在 `rpc trust <slug>` 记录来源前保持隔离（world-writable 目录中的二进制拒绝信任）；每次 invoke 都会复验来源（漂移即撤销信任，`LBR-AGENT-005`）；子进程环境被清空为白名单注入，stderr 被捕获/限长/脱敏——绝不继承。invoke 超时、broken pipe、malformed frame 映射 `LBR-AGENT-012`；IO 硬上限超限映射 `LBR-AGENT-007`。
 
 - 顶层 `agent hooks` 入口是隐藏的，面向由 `libra agent enable` 安装的 hook 配置；用户通常不会直接调用它。
 - `checkpoint rewind --apply` 只恢复工作树文件；代理自身的 transcript 文件不会被重写。

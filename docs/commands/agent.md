@@ -55,8 +55,10 @@ for any other non-roster agent — return an actionable unsupported error.
 | `clean` | Clean up temporary checkpoints from stopped sessions |
 | `doctor` | Diagnose hook installation and capture state |
 | `push` | Push `refs/libra/traces` to a remote |
-| `rpc list` | List discovered `libra-agent-*` binaries on `PATH` |
-| `rpc invoke` | Invoke one JSON-RPC method on a `libra-agent-*` binary |
+| `rpc list` | List discovered `libra-agent-*` binaries on `PATH` (with trusted/quarantined state); requires the external-agents opt-in |
+| `rpc trust <slug>` | Trust a discovered binary — records path + sha256 + device/inode/mtime provenance (refused when its directory is world-writable) |
+| `rpc untrust <slug>` | Revoke trust; the binary returns to quarantine (always available, even while external agents are disabled) |
+| `rpc invoke` | Invoke one JSON-RPC method on a trusted `libra-agent-*` binary |
 
 ## Common Options
 
@@ -166,6 +168,19 @@ CLI surface stay in sync (cross-cutting `--help` EXAMPLES rollout, see
 `docs/development/commands/_general.md` item B).
 
 ## Notes
+
+- External `libra-agent-*` agents are **disabled by default**. Opt in with
+  `libra config set agent.external_agents.enabled true` (repo-local); until
+  then `rpc list`/`rpc trust`/`rpc invoke` refuse with `LBR-AGENT-002`
+  (`rpc untrust` stays available — revoking trust only tightens security).
+  Discovered binaries stay quarantined until `rpc trust <slug>` records
+  their provenance (trust is refused for a binary in a world-writable
+  directory), every invoke revalidates it (drift revokes trust,
+  `LBR-AGENT-005`), the child environment is cleared to an allowlist, and
+  stderr is captured/capped/redacted — never inherited. Invoke timeouts,
+  broken pipes and malformed frames map to `LBR-AGENT-012`; IO hard-cap
+  violations map to `LBR-AGENT-007`.
+
 
 - The top-level `agent hooks` entry is hidden and intended for hook configs
   installed by `libra agent enable`; users normally do not call it directly.

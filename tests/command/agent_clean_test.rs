@@ -612,3 +612,135 @@ async fn agent_clean_rewrites_agent_traces_when_temporary_commit_is_ancestor() {
         "the old committed commit descended from the temporary checkpoint and must be replaced"
     );
 }
+
+/// AG-24a retention GC (`agent clean --gc`): drops checkpoints older than
+/// the transcript retention window from stopped sessions REGARDLESS of
+/// scope (unlike the default/temporary path), leaves recent ones, and
+/// never touches the append-only `agent_audit_log`.
+#[tokio::test]
+async fn agent_clean_gc_drops_expired_all_scopes_and_keeps_audit_log() {
+    let repo = tempfile::tempdir().expect("repo tempdir");
+    init_repo_via_cli(repo.path());
+
+    let now = chrono::Utc::now().timestamp();
+    let ancient = now - 200 * 86_400; // 200 days ago — past the 90-day window
+    let recent = now - 3 * 86_400; // 3 days ago — inside the window
+
+    let conn = connect_repo_db(repo.path()).await;
+    seed_session(&conn, "stopped-session", "stopped", 10, 20, 30).await;
+    // Expired: both a temporary AND a committed checkpoint must be swept.
+    seed_checkpoint(
+        &conn,
+        "cp-old-temp",
+        "stopped-session",
+        "temporary",
+        ancient,
+    )
+    .await;
+    seed_checkpoint(
+        &conn,
+        "cp-old-committed",
+        "stopped-session",
+        "committed",
+        ancient,
+    )
+    .await;
+    // Recent: inside the window, must survive.
+    seed_checkpoint(
+        &conn,
+        "cp-recent-committed",
+        "stopped-session",
+        "committed",
+        recent,
+    )
+    .await;
+    // An audit row that GC must never delete.
+    conn.execute(Statement::from_sql_and_values(
+        conn.get_database_backend(),
+        "INSERT INTO agent_audit_log \
+         (audit_id, timestamp, action, checkpoint_id, scope, granted) \
+         VALUES (?, ?, ?, ?, ?, ?)",
+        vec![
+            Value::from("audit-1"),
+            Value::from("2026-07-05T00:00:00Z"),
+            Value::from("raw_export"),
+            Value::from("cp-old-committed"),
+            Value::from("transcript"),
+            Value::from(1i64),
+        ],
+    ))
+    .await
+    .expect("seed audit row");
+    conn.close().await.expect("close seed connection");
+
+    let output = run_libra_command(&["--quiet", "agent", "clean", "--gc"], repo.path());
+    assert_cli_success(&output, "libra agent clean --gc");
+
+    let conn = connect_repo_db(repo.path()).await;
+    assert!(
+        !checkpoint_exists(&conn, "cp-old-temp").await,
+        "GC drops expired temporary checkpoints"
+    );
+    assert!(
+        !checkpoint_exists(&conn, "cp-old-committed").await,
+        "GC drops expired committed checkpoints (scope-agnostic)"
+    );
+    assert!(
+        checkpoint_exists(&conn, "cp-recent-committed").await,
+        "GC keeps checkpoints inside the retention window"
+    );
+    // The audit log survives GC untouched.
+    let audit = conn
+        .query_one(Statement::from_sql_and_values(
+            conn.get_database_backend(),
+            "SELECT COUNT(*) AS n FROM agent_audit_log WHERE audit_id = ?",
+            [Value::from("audit-1")],
+        ))
+        .await
+        .expect("query audit")
+        .expect("row");
+    assert_eq!(
+        audit.try_get_by::<i64, _>("n").expect("count"),
+        1,
+        "GC must never delete agent_audit_log rows"
+    );
+}
+
+/// `--retention-days` overrides the configured window and `--retention-days 0`
+/// is rejected as usage.
+#[tokio::test]
+async fn agent_clean_gc_retention_days_override_and_zero_rejected() {
+    let repo = tempfile::tempdir().expect("repo tempdir");
+    init_repo_via_cli(repo.path());
+
+    let now = chrono::Utc::now().timestamp();
+    let two_days_ago = now - 2 * 86_400;
+
+    let conn = connect_repo_db(repo.path()).await;
+    seed_session(&conn, "stopped-session", "stopped", 10, 20, 30).await;
+    seed_checkpoint(&conn, "cp-2d", "stopped-session", "committed", two_days_ago).await;
+    conn.close().await.expect("close seed connection");
+
+    // Window of 1 day → the 2-day-old checkpoint is expired.
+    let output = run_libra_command(
+        &["--quiet", "agent", "clean", "--gc", "--retention-days", "1"],
+        repo.path(),
+    );
+    assert_cli_success(&output, "libra agent clean --gc --retention-days 1");
+    let conn = connect_repo_db(repo.path()).await;
+    assert!(
+        !checkpoint_exists(&conn, "cp-2d").await,
+        "--retention-days 1 expires a 2-day-old checkpoint"
+    );
+    conn.close().await.expect("close");
+
+    // --retention-days 0 is a usage error.
+    let output = run_libra_command(
+        &["agent", "clean", "--gc", "--retention-days", "0"],
+        repo.path(),
+    );
+    assert!(
+        !output.status.success(),
+        "--retention-days 0 must be rejected"
+    );
+}

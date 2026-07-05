@@ -741,7 +741,7 @@ pub(crate) fn utc_timestamp() -> String {
         .to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
 }
 
-fn read_json_opt<T: serde::de::DeserializeOwned>(path: &Path) -> io::Result<Option<T>> {
+pub(crate) fn read_json_opt<T: serde::de::DeserializeOwned>(path: &Path) -> io::Result<Option<T>> {
     match fs::read(path) {
         Ok(bytes) => {
             let value = serde_json::from_slice(&bytes).map_err(io::Error::other)?;

@@ -29,6 +29,10 @@ mod push;
 // `src/cli.rs`); its implementation lives here so it can reuse the
 // AG-20 `pub(super)` pagination helpers in `checkpoint.rs`.
 pub mod review;
+// `libra investigate` is a TOP-LEVEL command (AG-23; `Commands::Investigate`
+// in `src/cli.rs`); it lives here for the same reason — reuse of the AG-20
+// `pub(super)` pagination helpers in `checkpoint.rs`.
+pub mod investigate;
 mod rpc;
 mod session;
 mod status;

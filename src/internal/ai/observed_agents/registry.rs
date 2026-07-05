@@ -12,8 +12,11 @@
 //!   `opencode`. Nothing else may be exposed as `supported=true`.
 //! - Since AG-22 the first-batch trio is also `launchable_review` (the
 //!   `libra review` launcher gates on this flag via
-//!   [`launchable_review_slugs`], never on `supported` alone);
-//!   `launchable_investigate` stays `false` until AG-23 lands.
+//!   [`launchable_review_slugs`], never on `supported` alone). Since AG-23
+//!   the same trio is also `launchable_investigate` (the
+//!   `libra investigate` launcher gates on [`launchable_investigate_slugs`]),
+//!   so `review` and `investigate` launchability are declared and gated
+//!   independently even though the first-batch roster is identical.
 //! - `gemini`, `cursor`, `copilot`, `factory-ai` stay registered (their
 //!   adapters exist and historical data must remain readable) but are
 //!   unsupported: never hook-installable, never launchable.
@@ -120,10 +123,10 @@ static REGISTRY: [AgentRegistration; 7] = [
         transcript_readable: true,
         hook_installable: true,
         installed: false,
-        // AG-22: review-launchable (read-only reviewer spawn shape per
-        // plan.md §0.3.2); investigate stays false until AG-23.
+        // AG-22/AG-23: review- AND investigate-launchable (read-only
+        // spawn shape per plan.md §0.3.2, gated independently).
         launchable_review: true,
-        launchable_investigate: false,
+        launchable_investigate: true,
         external_binary: false,
         config_paths: &[".claude/settings.json"],
         capabilities: CLAUDE_CODE_CAPS,
@@ -159,10 +162,10 @@ static REGISTRY: [AgentRegistration; 7] = [
         // only loads for user-trusted projects, so Libra does not write it.
         hook_installable: true,
         installed: false,
-        // AG-22: review-launchable (read-only reviewer spawn shape per
-        // plan.md §0.3.2); investigate stays false until AG-23.
+        // AG-22/AG-23: review- AND investigate-launchable (read-only
+        // spawn shape per plan.md §0.3.2, gated independently).
         launchable_review: true,
-        launchable_investigate: false,
+        launchable_investigate: true,
         external_binary: false,
         config_paths: &[".codex/hooks.json"],
         capabilities: HOOKS_AND_TOKENS,
@@ -199,10 +202,10 @@ static REGISTRY: [AgentRegistration; 7] = [
         // `.opencode/plugin/libra-hooks.js` (project-local).
         hook_installable: true,
         installed: false,
-        // AG-22: review-launchable (read-only reviewer spawn shape per
-        // plan.md §0.3.2); investigate stays false until AG-23.
+        // AG-22/AG-23: review- AND investigate-launchable (read-only
+        // spawn shape per plan.md §0.3.2, gated independently).
         launchable_review: true,
-        launchable_investigate: false,
+        launchable_investigate: true,
         external_binary: false,
         config_paths: &[".opencode/plugin/libra-hooks.js"],
         capabilities: HOOKS_AND_TOKENS,
@@ -279,6 +282,20 @@ pub fn launchable_review_slugs() -> Vec<&'static str> {
         .collect()
 }
 
+/// Slugs launchable as read-only investigators (`launchable_investigate`,
+/// AG-23), in registration order. This — not [`supported_slugs`] and not
+/// [`launchable_review_slugs`] — is the `libra investigate` launcher
+/// gate: investigate launchability is declared independently of review
+/// launchability, so the CLI roster and the investigate launcher never
+/// disagree even if the two rosters diverge later.
+pub fn launchable_investigate_slugs() -> Vec<&'static str> {
+    REGISTRY
+        .iter()
+        .filter(|row| row.launchable_investigate)
+        .map(|row| row.slug)
+        .collect()
+}
+
 /// Result of resolving a user-supplied slug against the roster.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SlugLookup {
@@ -328,13 +345,16 @@ mod tests {
         }
     }
 
-    /// AG-22: the review-launchable roster is exactly the first-batch
-    /// trio; launchable implies supported; investigate launchability
-    /// stays fully off until AG-23.
+    /// AG-22/AG-23: the review- and investigate-launchable rosters are
+    /// each exactly the first-batch trio; launchability implies supported.
     #[test]
     fn launchable_review_roster_is_the_first_batch_trio() {
         assert_eq!(
             launchable_review_slugs(),
+            ["claude-code", "codex", "opencode"]
+        );
+        assert_eq!(
+            launchable_investigate_slugs(),
             ["claude-code", "codex", "opencode"]
         );
         for row in registry() {
@@ -345,11 +365,13 @@ mod tests {
                     row.slug
                 );
             }
-            assert!(
-                !row.launchable_investigate,
-                "{}: launchable_investigate is AG-23 (not landed)",
-                row.slug
-            );
+            if row.launchable_investigate {
+                assert!(
+                    row.supported,
+                    "{}: launchable_investigate implies supported",
+                    row.slug
+                );
+            }
         }
     }
 

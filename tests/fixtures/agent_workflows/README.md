@@ -1,12 +1,17 @@
-# Agent workflow fixtures — provenance note (AG-22 / plan.md Task A7)
+# Agent workflow fixtures — provenance note (AG-22 / plan.md Task A7; AG-23 / Task A8)
 
-Fake reviewer processes for `tests/agent_review_workflow_test.rs` and
-`tests/agent_review_span_test.rs`. Each is a hand-written POSIX `/bin/sh`
-script driven through the `ReviewerSource::Custom` /
-`ReviewerCommand` test seam (`src/internal/ai/review/launcher.rs`) — they
-stand in for the real `codex` / `claude` / `opencode` reviewer CLIs so
-the AG-22 run loop (fan-in, bounded sink, terminal states, cancel
-cleanup) is exercised deterministically at L1, with no network, no
+Fake reviewer / investigator processes for
+`tests/agent_review_workflow_test.rs`, `tests/agent_review_span_test.rs`,
+`tests/agent_investigate_workflow_test.rs`, and
+`tests/agent_investigate_span_test.rs`. Each is a hand-written POSIX
+`/bin/sh` script driven through the `ReviewerSource::Custom` /
+`InvestigatorSource::Custom` / `ReviewerCommand` test seam
+(`src/internal/ai/review/launcher.rs`; investigate reuses that seam
+verbatim) — they stand in for the real `codex` / `claude` / `opencode`
+reviewer CLIs so the AG-22 review run loop (fan-in, bounded sink,
+terminal states, cancel cleanup) and the AG-23 investigate loop (strict
+round-robin, quorum/max-turns, stall/agent-failure pause, continue,
+cancel) are exercised deterministically at L1, with no network, no
 credentials, and no real agent binaries.
 
 Constraints (all scripts):
@@ -35,8 +40,13 @@ Constraints (all scripts):
 | `reviewer-flood.sh` | `$1` lines (default 16384 ≈ 1.06 MiB) of 64-char payload on stdout | 64 KiB sink-cap truncation, sink non-blocking, cancel-during-pending-output stress |
 | `reviewer-quiet.sh` | exactly two known finding lines, exit 0 | proves a flooding sibling never starves a quiet reviewer |
 | `reviewer-pidfile.sh` | writes `$$` to the file named by `$1`, then `exec /bin/sleep 300` | cancel releases reviewer processes (kill -0 fails afterwards) |
+| `investigator-conclude.sh` | prints a CONCLUDING stance (contains `conclude`), exit 0 | AG-23 quorum-reaching + round-robin-order + span scenarios |
+| `investigator-continue.sh` | prints a NON-concluding stance (no `conclud` token), exit 0 | AG-23 max-turns + round-robin prior-context scenarios |
+| `investigator-secret.sh` | CONCLUDES and emits a runtime-assembled fake `sk-` credential + ANSI escape, exit 0 | AG-23 E8 findings-doc redaction proof (secret/ANSI must not survive) |
+| `investigator-silent.sh` | exits 0 with NO stdout | AG-23 stall → `PauseReason::Stalled` (empty successful turn) |
 
 Refresh protocol: these fixtures pin the *engine seam*, not any external
 CLI wire format — they only need updating if `ReviewerCommand` /
-`run_review` semantics change (update `src/internal/ai/review/` and this
+`run_review` / `run_investigate` semantics change (update
+`src/internal/ai/review/` or `src/internal/ai/investigate/` and this
 table in the same PR).

@@ -8,8 +8,9 @@
 use std::collections::BTreeSet;
 
 use libra::internal::ai::observed_agents::{
-    AgentKind, DeclaredAgentCaps, FIRST_BATCH_WAVE, SlugLookup, agent_for, launchable_review_slugs,
-    lookup_cli_slug, registration_for, registry, supported_slugs,
+    AgentKind, DeclaredAgentCaps, FIRST_BATCH_WAVE, SlugLookup, agent_for,
+    launchable_investigate_slugs, launchable_review_slugs, lookup_cli_slug, registration_for,
+    registry, supported_slugs,
 };
 
 /// E1: `DeclaredAgentCaps` serializes to exactly the 8 frozen snake_case
@@ -103,13 +104,19 @@ fn known_agent_capability_matrix_matches_current_roster() {
     assert!(opencode.capabilities.hooks);
     assert_eq!(opencode.config_paths, [".opencode/plugin/libra-hooks.js"]);
 
-    // AG-22: the first batch is review-launchable — `libra review`
-    // gates on this exact flag, so the matrix row and the launcher can
-    // never disagree. `launchable_investigate` stays false until AG-23.
+    // AG-22 / AG-23: the first batch is BOTH review- and
+    // investigate-launchable — `libra review` / `libra investigate` gate
+    // on these exact (independent) flags, so the matrix rows and the
+    // launchers can never disagree.
     assert_eq!(
         launchable_review_slugs(),
         ["claude-code", "codex", "opencode"],
         "the review-launchable roster is exactly the first-batch trio"
+    );
+    assert_eq!(
+        launchable_investigate_slugs(),
+        ["claude-code", "codex", "opencode"],
+        "the investigate-launchable roster is exactly the first-batch trio"
     );
     for kind in [AgentKind::ClaudeCode, AgentKind::Codex, AgentKind::OpenCode] {
         let row = registration_for(kind);
@@ -119,8 +126,8 @@ fn known_agent_capability_matrix_matches_current_roster() {
             row.slug
         );
         assert!(
-            !row.launchable_investigate,
-            "{}: investigate launchability is AG-23 (not landed)",
+            row.launchable_investigate,
+            "{}: first-batch rows are investigate-launchable since AG-23",
             row.slug
         );
     }
@@ -129,6 +136,13 @@ fn known_agent_capability_matrix_matches_current_roster() {
             assert!(
                 row.supported,
                 "{}: launchable_review implies supported, never the reverse",
+                row.slug
+            );
+        }
+        if row.launchable_investigate {
+            assert!(
+                row.supported,
+                "{}: launchable_investigate implies supported, never the reverse",
                 row.slug
             );
         }

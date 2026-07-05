@@ -56,7 +56,7 @@ Command Groups:
   History Inspection      log, shortlog, show, show-ref, format-patch, ls-remote, ls-tree, diff, grep, blame, describe, notes, archive, revision
   Commit And Branching    commit, branch, switch, checkout, tag, merge, rebase, reset, cherry-pick, revert, rerere, metadata
   Remote And Cloud        remote, fetch, pull, push, open, cloud, cache, publish, credential, bundle, auth
-  AI And Automation       code, code-control, automation, usage, graph, sandbox, agent, review, service
+  AI And Automation       code, code-control, automation, usage, graph, sandbox, agent, review, investigate, service
   Maintenance And Plumbing fsck, maintenance, repack, logfile, cat-file, hash-object, write-tree, read-tree, update-index, update-ref, merge-file, merge-base, apply, diff-tree, diff-index, diff-files, fast-export, fast-import, replace, verify-pack, rev-parse, rev-list, symbolic-ref, reflog, bisect, for-each-ref, commit-tree, file, alternates, deps
 
 Help Topics:
@@ -687,6 +687,8 @@ enum Commands {
     Agent(command::agent::AgentArgs),
     #[command(about = "Run read-only external-agent code reviews (AG-22)")]
     Review(command::agent::review::ReviewArgs),
+    #[command(about = "Run read-only round-robin agent investigations (AG-23)")]
+    Investigate(command::agent::investigate::InvestigateArgs),
     #[command(
         about = "Build pack index file for an existing packed archive",
         hide = true
@@ -1772,6 +1774,9 @@ pub async fn parse_async(args: Option<&[&str]>) -> CliResult<()> {
         Commands::Agent(cmd_args) => command::agent::execute_safe(cmd_args, &output).await?,
         Commands::Review(cmd_args) => {
             command::agent::review::execute_safe(cmd_args, &output).await?
+        }
+        Commands::Investigate(cmd_args) => {
+            command::agent::investigate::execute_safe(cmd_args, &output).await?
         }
         Commands::Hooks(cmd_args) => command::hooks::execute_safe(cmd_args, &output).await?,
         Commands::Bisect(bisect_cmd) => command::bisect::execute_safe(bisect_cmd, &output).await?,

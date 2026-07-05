@@ -1567,7 +1567,7 @@ Rules：
 | `hook_installable` | `agent.as_hooks().is_some() && supported` | capability + roster 双门控 |
 | `installed` | `as_hooks().hooks_are_installed()` | 只在 `hook_installable=true` 时调用；否则 false |
 | `launchable_review` | registry row `launchable_review`（AG-22 已落地：首批 `claude-code`/`codex`/`opencode` 为 true；`libra review` launcher 以该 flag 为唯一门控事实源，supported ≠ launchable） | registered/readable 不等于 launchable |
-| `launchable_investigate` | registry row `launchable_investigate`（AG-23 未落地：当前所有行一律 false） | 与 review 分开 |
+| `launchable_investigate` | registry row `launchable_investigate`（AG-23 已落地：首批 `claude-code`/`codex`/`opencode` 为 true；`libra investigate` launcher 以该 flag 为唯一门控事实源，与 `launchable_review` 独立声明、独立门控） | 与 review 分开 |
 | `external_binary` | RPC shim registration | built-in false；external true 且必须带 absolute path |
 | `capabilities` | `DeclaredAgentCaps` | 8-bool wire shape，字段名固定 |
 

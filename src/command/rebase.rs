@@ -3221,6 +3221,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn create_tree_from_items_map_preserves_blob_modes() {
         let repo = tempdir().expect("temp repo");
         setup_with_new_libra_in(repo.path()).await;
@@ -4133,6 +4134,7 @@ mod rebuild_index_tests {
     };
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn rebuild_index_from_tree_preserves_executable_and_symlink_modes() {
         let repo = tempdir().unwrap();
         setup_with_new_libra_in(repo.path()).await;
@@ -4165,6 +4167,7 @@ mod rebuild_index_tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn rebuild_index_from_tree_returns_path_context_for_missing_blob() {
         let repo = tempdir().unwrap();
         setup_with_new_libra_in(repo.path()).await;
@@ -4187,6 +4190,7 @@ mod rebuild_index_tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn rebuild_index_from_tree_rejects_gitlink_entries() {
         let repo = tempdir().unwrap();
         setup_with_new_libra_in(repo.path()).await;

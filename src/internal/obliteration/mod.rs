@@ -332,6 +332,7 @@ mod tests {
     /// State machine: (no row)=Live -> obliterating -> obliterated; tombstone
     /// is permanent and both states count as intentionally-absent.
     #[tokio::test]
+    #[serial_test::serial]
     async fn state_machine_and_tombstone_permanence() {
         let tmp = tempfile::tempdir().expect("tmp");
         let _guard = ChangeDirGuard::new(tmp.path());
@@ -390,6 +391,7 @@ mod tests {
 
     /// The sync snapshot reflects the store after a refresh.
     #[tokio::test]
+    #[serial_test::serial]
     async fn snapshot_reflects_store() {
         let tmp = tempfile::tempdir().expect("tmp");
         let _guard = ChangeDirGuard::new(tmp.path());

@@ -1736,6 +1736,7 @@ mod test {
     /// a string `starts_with`, `srcfoo/x` would falsely read as inside
     /// `src` — a scope-escape. Pin the rejection.
     #[test]
+    #[serial]
     fn test_is_sub_path_rejects_byte_prefix_sibling_and_unrelated_paths() {
         let _guard = test::ChangeDirGuard::new(Path::new(env!("CARGO_MANIFEST_DIR")));
 
@@ -1769,6 +1770,7 @@ mod test {
     /// otherwise only by the root-escape test — is pinned for the
     /// in-scope / sibling-escape cases too.
     #[test]
+    #[serial]
     fn test_is_sub_path_resolves_interior_parent_dir() {
         let _guard = test::ChangeDirGuard::new(Path::new(env!("CARGO_MANIFEST_DIR")));
 

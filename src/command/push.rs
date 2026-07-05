@@ -3125,6 +3125,7 @@ mod test {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn incremental_objs_fast_forward_skips_unchanged_subtree_blobs() {
         let repo = tempfile::tempdir().expect("repo tempdir should be created");
         crate::utils::test::setup_with_new_libra_in(repo.path()).await;
@@ -3214,6 +3215,7 @@ mod test {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn diff_tree_objs_recurses_by_path_for_changed_subtrees() {
         let repo = tempfile::tempdir().expect("repo tempdir should be created");
         crate::utils::test::setup_with_new_libra_in(repo.path()).await;

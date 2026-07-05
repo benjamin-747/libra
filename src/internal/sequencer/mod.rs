@@ -327,6 +327,7 @@ mod tests {
     /// Round-trip every SequenceKind through the unified table so the superset
     /// schema is validated for all four consumers (not just the migrated one).
     #[tokio::test]
+    #[serial_test::serial]
     async fn save_load_clear_round_trip_all_kinds() {
         let tmp = tempfile::tempdir().expect("tmp");
         let _guard = ChangeDirGuard::new(tmp.path());
@@ -359,6 +360,7 @@ mod tests {
     /// The symmetric mutex blocks a DIFFERENT sequence, allows the same kind
     /// (its own command handles same-op), and passes when idle.
     #[tokio::test]
+    #[serial_test::serial]
     async fn ensure_none_in_progress_cross_op_matrix() {
         let tmp = tempfile::tempdir().expect("tmp");
         let _guard = ChangeDirGuard::new(tmp.path());

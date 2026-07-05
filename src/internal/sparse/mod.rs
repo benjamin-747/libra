@@ -222,6 +222,7 @@ mod tests {
 
     /// Store round-trip: set/add/list ordering + enable/disable/clear.
     #[tokio::test]
+    #[serial_test::serial]
     async fn store_round_trip() {
         let tmp = tempfile::tempdir().expect("tmp");
         let _guard = ChangeDirGuard::new(tmp.path());

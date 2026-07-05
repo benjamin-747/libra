@@ -686,6 +686,7 @@ mod tests {
     use crate::utils::test::{ChangeDirGuard, setup_with_new_libra_in};
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn add_list_order_and_unique() {
         let tmp = tempfile::tempdir().expect("tmp");
         let _guard = ChangeDirGuard::new(tmp.path());

@@ -1035,6 +1035,41 @@ async fn test_status_normal_reports_untracked_directory_without_descending() {
 
 #[tokio::test]
 #[serial]
+async fn test_status_normal_untracked_directories_are_sorted() {
+    let test_dir = tempdir().unwrap();
+    test::setup_with_new_libra_in(test_dir.path()).await;
+    let _guard = test::ChangeDirGuard::new(test_dir.path());
+
+    fs::create_dir_all("zeta").unwrap();
+    fs::write("zeta/file.txt", "z").unwrap();
+    fs::create_dir_all("alpha").unwrap();
+    fs::write("alpha/file.txt", "a").unwrap();
+
+    let mut output = Vec::new();
+    status_execute(
+        StatusArgs {
+            untracked_files: UntrackedFiles::Normal,
+            ..Default::default()
+        },
+        &mut output,
+    )
+    .await;
+
+    let output_str = String::from_utf8(output).unwrap().replace("\\", "/");
+    let alpha = output_str
+        .find("\talpha/")
+        .expect("normal status should list alpha/ as a collapsed directory");
+    let zeta = output_str
+        .find("\tzeta/")
+        .expect("normal status should list zeta/ as a collapsed directory");
+    assert!(
+        alpha < zeta,
+        "normal status should sort collapsed untracked directories: {output_str}"
+    );
+}
+
+#[tokio::test]
+#[serial]
 /// Tests --untracked-files=all retains untracked output (same as normal for now).
 async fn test_status_untracked_files_all() {
     let test_dir = tempdir().unwrap();

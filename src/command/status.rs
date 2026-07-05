@@ -415,13 +415,7 @@ async fn collect_status_data(args: &StatusArgs) -> CliResult<StatusData> {
         .into_iter()
         .map(util::workdir_to_current)
         .collect();
-    let needs_index = matches!(args.untracked_files, UntrackedFiles::Normal)
-        || matches!(args.porcelain, Some(PorcelainVersion::V2));
-    let mut maybe_index = if needs_index {
-        Some(worktree.index)
-    } else {
-        None
-    };
+    let mut maybe_index = Some(worktree.index);
 
     // Resolve rename detection: `--no-renames` wins (off); otherwise `--renames`
     // (or `--find-renames`) enables it at the given threshold (default 50).

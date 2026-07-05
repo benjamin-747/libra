@@ -261,13 +261,13 @@ pub async fn execute_safe(args: DoctorArgs, output: &OutputConfig) -> CliResult<
     };
 
     // Hook installation status across the v1 adapter matrix.
-    // - Two adapters carry HookProvider impls (claude-code, gemini) and
+    // - claude-code and gemini carry dedicated HookProvider impls and
     //   report real install status.
-    // - The five Phase 4.4 stable-promoted adapters (Cursor, Codex,
-    //   OpenCode, Copilot, FactoryAi) report `tier: Stable` but
-    //   `installed: None` because they read transcripts via
-    //   `AgentSessionCtx.transcript_path` rather than through a
-    //   HookProvider — the install pathway is per-agent v2 work.
+    // - Stable-promoted adapters probe through their spec's AG-19
+    //   `hooks` provider when they have one (codex, opencode — the A6.5
+    //   smoke requires doctor to see all three first-batch chains);
+    //   specs without an installable HookProvider (Cursor, Copilot,
+    //   FactoryAi) stay `installed: None`.
     // - Any future preview adapters (PREVIEW_SPECS empty after Phase
     //   4.4) would surface here too.
     let mut provider_hooks = vec![
@@ -282,7 +282,7 @@ pub async fn execute_safe(args: DoctorArgs, output: &OutputConfig) -> CliResult<
         provider_hooks.push(check_provider(
             spec.provider_name,
             AgentStability::Stable,
-            None,
+            spec.hooks,
         ));
     }
     for spec in PREVIEW_SPECS {

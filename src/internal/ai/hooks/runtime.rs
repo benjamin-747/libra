@@ -1534,8 +1534,22 @@ fn transcript_path_within_provider_root(
         return false;
     };
     adapter.protected_dirs().iter().any(|dir| {
-        home.join(dir)
-            .canonicalize()
+        // Codex relocates its whole home via `$CODEX_HOME` and every other
+        // part of the codex chain honors it (`resolve_codex_home` in
+        // providers/codex/settings.rs). The trust gate must resolve the
+        // same root, or sessions under a relocated CODEX_HOME are silently
+        // captured with empty transcripts (found by the A6.5 real-CLI
+        // smoke, which isolates CODEX_HOME). Only an absolute override is
+        // honored, mirroring `resolve_codex_home`'s validation.
+        let root = if *dir == ".codex" {
+            match std::env::var_os("CODEX_HOME").map(std::path::PathBuf::from) {
+                Some(path) if path.is_absolute() => path,
+                _ => home.join(dir),
+            }
+        } else {
+            home.join(dir)
+        };
+        root.canonicalize()
             .map(|root| canonical_path.starts_with(root))
             .unwrap_or(false)
     })
@@ -2908,6 +2922,59 @@ mod tests {
         assert!(
             body.contains("deploy with") && body.contains("please"),
             "the redacted transcript must retain the non-secret text, got: {body}",
+        );
+    }
+
+    /// A6.5 regression: codex relocates its whole home via `$CODEX_HOME`
+    /// and every other part of the codex chain honors it
+    /// (`resolve_codex_home`), so the transcript trust gate must resolve
+    /// the same root — otherwise sessions under a relocated CODEX_HOME are
+    /// silently captured with empty transcripts (exactly what the A6.5
+    /// real-CLI smoke observed with its isolated CODEX_HOME).
+    #[test]
+    #[serial]
+    fn codex_transcript_root_honors_codex_home_override() {
+        let adapter = crate::internal::ai::observed_agents::agent_for(
+            crate::internal::ai::observed_agents::AgentKind::Codex,
+        );
+        let codex_home = tempfile::tempdir().expect("codex home tempdir");
+        let sessions = codex_home.path().join("sessions");
+        std::fs::create_dir_all(&sessions).unwrap();
+        let rollout = sessions.join("rollout-test.jsonl");
+        std::fs::write(&rollout, "{}\n").unwrap();
+
+        // Fake $HOME so the real ~/.codex can never accidentally match.
+        let home = tempfile::tempdir().expect("fake home tempdir");
+        let prior_home = std::env::var_os("LIBRA_TEST_HOME");
+        let prior_codex = std::env::var_os("CODEX_HOME");
+        // SAFETY: test-only env mutation, restored below; serialised via
+        // #[serial] so it cannot race other env readers.
+        unsafe {
+            std::env::set_var("LIBRA_TEST_HOME", home.path());
+            std::env::set_var("CODEX_HOME", codex_home.path());
+        }
+        let trusted = transcript_path_within_provider_root(adapter, &rollout);
+        unsafe {
+            std::env::remove_var("CODEX_HOME");
+        }
+        let untrusted = transcript_path_within_provider_root(adapter, &rollout);
+        unsafe {
+            match prior_codex {
+                Some(value) => std::env::set_var("CODEX_HOME", value),
+                None => std::env::remove_var("CODEX_HOME"),
+            }
+            match prior_home {
+                Some(value) => std::env::set_var("LIBRA_TEST_HOME", value),
+                None => std::env::remove_var("LIBRA_TEST_HOME"),
+            }
+        }
+        assert!(
+            trusted,
+            "a rollout under $CODEX_HOME must pass the provider-root gate"
+        );
+        assert!(
+            !untrusted,
+            "without the override the relocated rollout stays untrusted"
         );
     }
 

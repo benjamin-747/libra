@@ -275,6 +275,12 @@ pub enum StableErrorCode {
     /// implementation slice; distinct from the IO hard-cap / redaction
     /// failures covered by `LBR-AGENT-007`).
     AgentRpcTransportFailed,
+    /// Raw (un-redacted) checkpoint access/export was requested without
+    /// the required `--allow-raw` authorization, and was refused
+    /// fail-closed (AG-24a compliance, E10
+    /// `ERR_AGENT_RAW_ACCESS_DENIED`). The refusal is itself audited in
+    /// `agent_audit_log` (granted = 0).
+    AgentRawAccessDenied,
 }
 
 impl Serialize for StableErrorCode {
@@ -330,6 +336,7 @@ impl StableErrorCode {
             Self::AgentFixBridgeUnavailable => "LBR-AGENT-010",
             Self::AgentUntrustedSeedForMutation => "LBR-AGENT-011",
             Self::AgentRpcTransportFailed => "LBR-AGENT-012",
+            Self::AgentRawAccessDenied => "LBR-AGENT-013",
         }
     }
 
@@ -379,7 +386,8 @@ impl StableErrorCode {
             | Self::AgentCheckpointStoreInconsistent
             | Self::AgentFixBridgeUnavailable
             | Self::AgentUntrustedSeedForMutation
-            | Self::AgentRpcTransportFailed => CliErrorCategory::Internal,
+            | Self::AgentRpcTransportFailed
+            | Self::AgentRawAccessDenied => CliErrorCategory::Internal,
         }
     }
 
@@ -516,6 +524,9 @@ impl StableErrorCode {
             }
             Self::AgentRpcTransportFailed => {
                 "External agent RPC transport failed (timeout, broken pipe, or malformed frame); invocation withheld fail-closed."
+            }
+            Self::AgentRawAccessDenied => {
+                "Raw (un-redacted) checkpoint access/export denied without --allow-raw; redacted --detail/--transcript output stays available."
             }
         }
     }
@@ -1897,6 +1908,7 @@ mod tests {
                 "LBR-AGENT-011",
             ),
             (StableErrorCode::AgentRpcTransportFailed, "LBR-AGENT-012"),
+            (StableErrorCode::AgentRawAccessDenied, "LBR-AGENT-013"),
         ] {
             assert_eq!(variant.as_str(), code);
         }
@@ -2029,6 +2041,7 @@ mod tests {
             StableErrorCode::AgentFixBridgeUnavailable,
             StableErrorCode::AgentUntrustedSeedForMutation,
             StableErrorCode::AgentRpcTransportFailed,
+            StableErrorCode::AgentRawAccessDenied,
         ] {
             assert_eq!(variant.category(), CliErrorCategory::Internal);
         }

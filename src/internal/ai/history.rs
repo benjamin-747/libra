@@ -1259,6 +1259,64 @@ impl HistoryManager {
         unreachable!("checkpoint prune retry loop must return on success or terminal error")
     }
 
+    /// AG-24a local erasure for one session (plan.md Task A8.5): make the
+    /// three local faces consistent — rewrite `refs/libra/traces` to drop
+    /// the session's checkpoints, delete its `agent_checkpoint` and
+    /// `agent_session` rows, and clean the now-unreachable `object_index`
+    /// rows. The append-only `agent_audit_log` is a separate table and is
+    /// never touched.
+    ///
+    /// Order matters: checkpoints are pruned FIRST (while the catalog rows
+    /// still exist, so the ref rewrite can enumerate what to keep), then
+    /// the `agent_session` row is deleted. Deleting the session first would
+    /// cascade its checkpoint rows away (FK `ON DELETE CASCADE`) and leave
+    /// `refs/libra/traces` pointing at orphan commits.
+    ///
+    /// D1/R2 cloud-mirror deletion propagation is explicitly out of scope
+    /// (documented deferral): this covers local consistency only.
+    pub async fn erase_session_local(&self, session_id: &str) -> Result<SessionEraseOutcome> {
+        use sea_orm::{Statement, Value};
+        let backend = self.db_conn.get_database_backend();
+
+        // Enumerate the session's checkpoints from the catalog.
+        let rows = self
+            .db_conn
+            .query_all(Statement::from_sql_and_values(
+                backend,
+                "SELECT checkpoint_id FROM agent_checkpoint WHERE session_id = ?",
+                [Value::from(session_id.to_string())],
+            ))
+            .await
+            .context("list checkpoints for session erasure")?;
+        let checkpoint_ids: Vec<String> = rows
+            .into_iter()
+            .map(|row| row.try_get_by::<String, _>("checkpoint_id"))
+            .collect::<std::result::Result<_, _>>()
+            .context("decode checkpoint_id for session erasure")?;
+
+        // Prune the checkpoints (ref rewrite + row + object_index) BEFORE
+        // deleting the session row.
+        let prune = self.prune_checkpoint_commits(&checkpoint_ids).await?;
+
+        // Delete the session row (cascades any residual checkpoint rows).
+        let deleted = self
+            .db_conn
+            .execute(Statement::from_sql_and_values(
+                backend,
+                "DELETE FROM agent_session WHERE session_id = ?",
+                [Value::from(session_id.to_string())],
+            ))
+            .await
+            .context("delete agent_session row for erasure")?;
+
+        Ok(SessionEraseOutcome {
+            session_deleted: deleted.rows_affected() > 0,
+            removed_checkpoints: prune.removed_checkpoints,
+            ref_rewritten: prune.ref_rewritten,
+            deleted_object_index_rows: prune.deleted_object_index_rows,
+        })
+    }
+
     /// AG-20 window A/B prune guards (`agent.md` write-sequence matrix,
     /// rows 727-732). Both refusals are deterministic and fail-closed:
     ///
@@ -1828,6 +1886,20 @@ pub struct CheckpointCommit {
     /// commit, counted across CAS attempts). Recorded on the
     /// `agent.checkpoint.write` span.
     pub object_count: u64,
+}
+
+/// Outcome of [`HistoryManager::erase_session_local`] — the three-face
+/// local erasure result for one session (AG-24a).
+#[derive(Debug, Clone)]
+pub struct SessionEraseOutcome {
+    /// Whether an `agent_session` row was deleted.
+    pub session_deleted: bool,
+    /// Checkpoints removed from the catalog + ref.
+    pub removed_checkpoints: u64,
+    /// Whether `refs/libra/traces` was rewritten.
+    pub ref_rewritten: bool,
+    /// `object_index` rows dropped for now-unreachable OIDs.
+    pub deleted_object_index_rows: u64,
 }
 
 /// Result of pruning checkpoint commits from `refs/libra/traces`.

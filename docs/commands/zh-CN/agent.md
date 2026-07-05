@@ -44,6 +44,7 @@ libra agent rpc <subcommand>
 | `checkpoint list` | 列出已捕获 checkpoint |
 | `checkpoint show <id>` | 显示 checkpoint 元数据 |
 | `checkpoint rewind <id>` | 检查或应用某个 checkpoint 的工作树回退 |
+| `checkpoint export <id>` | 导出 checkpoint transcript：默认脱敏（无需授权）；raw（未脱敏）导出须 `--allow-raw --raw` 并写入 append-only `agent_audit_log`（缺失授权时拒绝并返回 `LBR-AGENT-013`） |
 | `clean` | 清理已停止会话的临时 checkpoint（prune 遇到进行中的 checkpoint 写入或 traces 引用可达但无 catalog 行的提交时 fail-closed 拒绝；同时删除因此不可达的 `object_index` 行） |
 | `doctor` | 诊断 hook 安装和捕获状态；检测（`--repair` 时修复）checkpoint 存储不一致 |
 | `push` | 将 `refs/libra/traces` 推送到远程（`clean` prune 重写后的非快进推送用 `--force-rewrite`，采用 force-with-lease 语义） |

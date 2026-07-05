@@ -12,7 +12,7 @@ use git_internal::{
         tree::{Tree, TreeItem, TreeItemMode},
     },
 };
-use sea_orm::{ConnectionTrait, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, Statement};
 use serde::Serialize;
 
 use super::{CheckpointListArgs, CheckpointRewindArgs, CheckpointShowArgs, CheckpointSubcommand};
@@ -20,7 +20,7 @@ use crate::{
     command::load_object,
     internal::{ai::history::parse_content_hash, db::get_db_conn_instance},
     utils::{
-        error::{CliError, CliResult},
+        error::{CliError, CliResult, StableErrorCode},
         object::read_git_object,
         object_ext::TreeExt,
         output::{OutputConfig, emit_json_data},
@@ -33,6 +33,7 @@ pub async fn execute_safe(cmd: CheckpointSubcommand, output: &OutputConfig) -> C
         CheckpointSubcommand::List(args) => list(args, output).await,
         CheckpointSubcommand::Show(args) => show(args, output).await,
         CheckpointSubcommand::Rewind(args) => rewind(args, output).await,
+        CheckpointSubcommand::Export(args) => export(args, output).await,
     }
 }
 
@@ -1199,6 +1200,245 @@ fn subtree(storage: &Path, tree: &Tree, name: &str) -> Result<Tree, String> {
         format!("tree entry '{name}' missing while resolving the checkpoint tree")
     })?;
     read_tree_object(storage, &item.id.to_string())
+}
+
+/// `libra agent checkpoint export <id>` (AG-24a). Redacted export is the
+/// default and requires no authorization. A RAW (un-redacted) export
+/// requires `--allow-raw --raw`; a raw request without `--allow-raw` is
+/// refused fail-closed (`LBR-AGENT-013`) and the refusal is audited. Every
+/// raw access (grant or deny) appends one row to the append-only
+/// `agent_audit_log`.
+async fn export(args: super::CheckpointExportArgs, output: &OutputConfig) -> CliResult<()> {
+    use crate::internal::ai::observed_agents::compliance::max_transcript_read_bytes;
+
+    let conn = get_db_conn_instance().await;
+    let backend = conn.get_database_backend();
+    let row = load_checkpoint_row(&conn, &args.checkpoint_id).await?;
+
+    let wants_raw = args.raw || args.allow_raw;
+    // Fail-closed gate: raw requested without --allow-raw. Audit the
+    // refusal, then reject with LBR-AGENT-013.
+    if args.raw && !args.allow_raw {
+        write_export_audit(
+            &conn,
+            &args.checkpoint_id,
+            args.output_path.as_deref(),
+            args.justification.as_deref(),
+            false,
+        )
+        .await?;
+        return Err(CliError::fatal(
+            "raw (un-redacted) checkpoint export requires --allow-raw".to_string(),
+        )
+        .with_stable_code(StableErrorCode::AgentRawAccessDenied)
+        .with_hint("re-run with --allow-raw --raw to authorize (the access is audited)")
+        .with_hint("or omit --raw to export the redacted transcript (no authorization needed)"));
+    }
+
+    let cap = max_transcript_read_bytes()
+        .await
+        .map_err(|e| CliError::fatal(format!("read max_transcript_read_bytes config: {e:#}")))?;
+    let (bytes, truncated) = load_checkpoint_transcript_bytes(&row, cap)?;
+
+    let emitted = if wants_raw {
+        // Grant: audit the raw access, then emit the un-redacted bytes.
+        write_export_audit(
+            &conn,
+            &args.checkpoint_id,
+            args.output_path.as_deref(),
+            args.justification.as_deref(),
+            true,
+        )
+        .await?;
+        bytes
+    } else {
+        // Default redacted path — no --allow-raw, no audit; just scrub.
+        let (redacted, _report) =
+            crate::internal::ai::observed_agents::Redactor::new_default().redact(&bytes);
+        redacted.as_ref().to_vec()
+    };
+    let _ = backend; // backend used inside helpers
+
+    if let Some(path) = &args.output_path {
+        std::fs::write(path, &emitted)
+            .map_err(|e| CliError::fatal(format!("failed to write export to {path}: {e}")))?;
+        if output.is_json() {
+            emit_json_data(
+                "agent_checkpoint_export",
+                &serde_json::json!({
+                    "checkpoint_id": args.checkpoint_id,
+                    "raw": wants_raw,
+                    "bytes": emitted.len(),
+                    "truncated": truncated,
+                    "output_path": path,
+                }),
+                output,
+            )?;
+        } else if !output.quiet {
+            let kind = if wants_raw { "raw" } else { "redacted" };
+            println!(
+                "Exported {} {kind} transcript byte(s) to {path}{}",
+                emitted.len(),
+                if truncated { " (truncated at cap)" } else { "" }
+            );
+        }
+    } else {
+        use std::io::Write;
+        std::io::stdout()
+            .write_all(&emitted)
+            .map_err(|e| CliError::fatal(format!("failed to write export to stdout: {e}")))?;
+    }
+    Ok(())
+}
+
+/// Load one checkpoint catalog row or fail with an actionable message.
+async fn load_checkpoint_row(
+    conn: &(impl ConnectionTrait + ?Sized),
+    checkpoint_id: &str,
+) -> Result<CheckpointRow, CliError> {
+    if !table_exists(conn, "agent_checkpoint").await? {
+        return Err(CliError::fatal(format!(
+            "no checkpoint matches '{checkpoint_id}': agent_checkpoint table not present (run `libra init`?)"
+        )));
+    }
+    let backend = conn.get_database_backend();
+    let row = conn
+        .query_one(Statement::from_sql_and_values(
+            backend,
+            "SELECT checkpoint_id, session_id, scope, parent_commit, tree_oid, \
+                    metadata_blob_oid, traces_commit, created_at \
+             FROM agent_checkpoint WHERE checkpoint_id = ? LIMIT 1",
+            [checkpoint_id.into()],
+        ))
+        .await
+        .map_err(|e| CliError::fatal(format!("failed to query agent_checkpoint: {e}")))?
+        .ok_or_else(|| CliError::fatal(format!("no checkpoint matches '{checkpoint_id}'")))?;
+    Ok(CheckpointRow {
+        checkpoint_id: row.try_get_by("checkpoint_id").unwrap_or_default(),
+        session_id: row.try_get_by("session_id").unwrap_or_default(),
+        scope: row.try_get_by("scope").unwrap_or_default(),
+        parent_commit: row.try_get_by("parent_commit").ok().flatten(),
+        tree_oid: row.try_get_by("tree_oid").unwrap_or_default(),
+        metadata_blob_oid: row.try_get_by("metadata_blob_oid").unwrap_or_default(),
+        traces_commit: row.try_get_by("traces_commit").unwrap_or_default(),
+        created_at: row.try_get_by("created_at").unwrap_or_default(),
+    })
+}
+
+/// Read the checkpoint's stored transcript blob(s) from the E4-libra tree,
+/// enforcing the `max_transcript_read_bytes` cap. Returns `(bytes,
+/// truncated)`. Chunked transcripts are concatenated in manifest `parts`
+/// order (never by globbing tree names).
+fn load_checkpoint_transcript_bytes(
+    row: &CheckpointRow,
+    cap: u64,
+) -> Result<(Vec<u8>, bool), CliError> {
+    let storage = util::try_get_storage_path(None)
+        .map_err(|e| CliError::fatal(format!("not in a libra repository: {e}")))?;
+    let root = read_tree_object(&storage, &row.tree_oid).map_err(CliError::fatal)?;
+    let checkpoint_tree = subtree(&storage, &root, "checkpoint").map_err(CliError::fatal)?;
+    let prefix = row.checkpoint_id.get(..2).ok_or_else(|| {
+        CliError::fatal(format!("checkpoint id '{}' too short", row.checkpoint_id))
+    })?;
+    let prefix_tree = subtree(&storage, &checkpoint_tree, prefix).map_err(CliError::fatal)?;
+    let inner =
+        subtree(&storage, &prefix_tree, &row.checkpoint_id[2..]).map_err(CliError::fatal)?;
+
+    let manifest_item = tree_entry(&inner, "manifest.json").ok_or_else(|| {
+        CliError::fatal(
+            "checkpoint has no manifest.json (legacy layout not exportable)".to_string(),
+        )
+    })?;
+    let manifest_bytes = read_git_object(&storage, &manifest_item.id)
+        .map_err(|e| CliError::fatal(format!("read manifest.json: {e}")))?;
+    let manifest: serde_json::Value = serde_json::from_slice(&manifest_bytes)
+        .map_err(|e| CliError::fatal(format!("manifest.json invalid JSON: {e}")))?;
+    let transcript = manifest
+        .get("entries")
+        .and_then(|e| e.get("transcript"))
+        .ok_or_else(|| CliError::fatal("manifest has no transcript entry".to_string()))?;
+
+    // Collect the ordered list of blob OIDs (single or chunked).
+    let mut oids: Vec<String> = Vec::new();
+    if transcript
+        .get("chunked")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        for part in transcript
+            .get("parts")
+            .and_then(|v| v.as_array())
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+        {
+            if let Some(oid) = part.get("oid").and_then(|v| v.as_str()) {
+                oids.push(oid.to_string());
+            }
+        }
+    } else if let Some(oid) = transcript.get("oid").and_then(|v| v.as_str()) {
+        oids.push(oid.to_string());
+    }
+    if oids.is_empty() {
+        return Err(CliError::fatal(
+            "manifest transcript entry declares no blob oid".to_string(),
+        ));
+    }
+
+    let mut bytes: Vec<u8> = Vec::new();
+    let mut truncated = false;
+    for oid in oids {
+        let hash = ObjectHash::from_str(&oid)
+            .map_err(|e| CliError::fatal(format!("invalid transcript oid '{oid}': {e}")))?;
+        let part = read_git_object(&storage, &hash)
+            .map_err(|e| CliError::fatal(format!("read transcript blob {oid}: {e}")))?;
+        let remaining = (cap as usize).saturating_sub(bytes.len());
+        if part.len() > remaining {
+            bytes.extend_from_slice(&part[..remaining]);
+            truncated = true;
+            break;
+        }
+        bytes.extend_from_slice(&part);
+    }
+    Ok((bytes, truncated))
+}
+
+/// Append one `agent_audit_log` row for a raw checkpoint export (or its
+/// fail-closed refusal). Actor identity is resolved from the committer
+/// env vars (never the checkpoint's hardcoded `Libra <ai@libra>`).
+async fn write_export_audit(
+    conn: &DatabaseConnection,
+    checkpoint_id: &str,
+    export_path: Option<&str>,
+    justification: Option<&str>,
+    granted: bool,
+) -> Result<(), CliError> {
+    use crate::internal::ai::observed_agents::compliance::{
+        AuditRecord, AuditScope, write_audit_record,
+    };
+    let user_name = std::env::var("GIT_COMMITTER_NAME")
+        .ok()
+        .or_else(|| std::env::var("GIT_AUTHOR_NAME").ok())
+        .or_else(|| std::env::var("LIBRA_COMMITTER_NAME").ok())
+        .filter(|s| !s.is_empty());
+    let user_email = std::env::var("GIT_COMMITTER_EMAIL")
+        .ok()
+        .or_else(|| std::env::var("EMAIL").ok())
+        .or_else(|| std::env::var("LIBRA_COMMITTER_EMAIL").ok())
+        .filter(|s| !s.is_empty());
+    let record = AuditRecord::new(
+        uuid::Uuid::new_v4().to_string(),
+        chrono::Utc::now().to_rfc3339(),
+        (user_email, user_name),
+        "raw_export",
+        checkpoint_id,
+        AuditScope::Transcript,
+        export_path.map(str::to_string),
+        justification.map(str::to_string),
+        granted,
+    );
+    write_audit_record(conn, &record)
+        .await
+        .map_err(|e| CliError::fatal(format!("append audit record: {e:#}")))
 }
 
 fn load_metadata_blob(oid: &str) -> Result<String, CliError> {

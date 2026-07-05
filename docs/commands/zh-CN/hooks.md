@@ -6,23 +6,28 @@
 
 ```
 libra hooks claude   {session-start|prompt|tool-use|model-update|compaction|stop|session-end}
-libra hooks gemini   {session-start|prompt|tool-use|model-update|compaction|stop|session-end}
+libra hooks codex    {session-start|prompt|tool-use|model-update|compaction|stop|session-end|subagent-start|subagent-end}
+libra hooks gemini   <event>   # 拒绝并给出提示：gemini 已是 uninstall-only（AG-17）
 ```
 
 ## 说明
 
-`libra hooks` 是由 Claude Code / Gemini hook 配置调用的**隐藏**（clap 中 `hide = true`）兼容性表面。每次调用都会从 stdin 读取单个 hook 事件 payload（JSON），根据提供商特定 schema 验证它，并将脱敏后的投影记录到活动的 `.libra/sessions/{id}/session.jsonl`。
+`libra hooks` 是由 Claude Code / Codex hook 配置调用的**隐藏**（clap 中 `hide = true`）兼容性表面。每次调用都会从 stdin 读取单个 hook 事件 payload（JSON），根据提供商特定 schema 验证它，并将脱敏后的投影记录到外部代理捕获存储（`agent_session` / `agent_checkpoint` + `refs/libra/traces`）。
 
 该命令被隐藏，因为：
 
-- 它不是面向用户的 CLI 契约的一部分；它必须继续能被 hook 配置调用，而这些配置格式由上游提供商（Claude Code / Gemini）拥有，不由 Libra 拥有。如果将其视为公共表面，就需要在 Libra 侧冻结 JSON payload schema，但这不可能，因为提供商可在任意版本中更改 payload。
+- 它不是面向用户的 CLI 契约的一部分；它必须继续能被 hook 配置调用，而这些配置格式由上游提供商（Claude Code / Codex）拥有，不由 Libra 拥有。如果将其视为公共表面，就需要在 Libra 侧冻结 JSON payload schema，但这不可能，因为提供商可在任意版本中更改 payload。
 - 它产生的事件会被 `libra agent session list`、`libra agent checkpoint *` 和 `libra agent doctor` 读取。用于检查已捕获会话的公共表面是 `agent` 子命令（[agent.md](agent.md)），不是 `hooks`。
 
-要启用捕获，运行 `libra agent enable --agent claude`（或 `--agent gemini`）；这会安装引用 `libra hooks claude ...`（或 `libra hooks gemini ...`）的提供商 hook 配置。要禁用捕获，运行 `libra agent disable --agent <name>`。
+`libra hooks claude <verb>` 是 `libra agent enable --agent claude-code` 写入项目 `.claude/settings.json` 的稳定调用面；`libra hooks codex <verb>`（AG-19）是 `libra agent enable --agent codex` 写入 `$CODEX_HOME/hooks.json` 的稳定调用面。两者都记录到 AgentTraces 捕获存储（`refs/libra/traces`）；claude 历史上路由到 `refs/libra/intent` 写入器的行为已由 Task A6.5 本地采集 smoke 收敛（该 smoke 要求已安装 hook 的采集出现在 `libra agent session/checkpoint list` 中）。Codex 额外转发原生子代理边界（`subagent-start` / `subagent-end`）。
+
+`libra hooks gemini <verb>` 不再摄入：gemini 已是 uninstall-only（AG-17），降级前安装的过时 hook 配置会得到指向 `libra agent remove gemini` 的可操作错误，而不是静默捕获数据。
+
+要启用捕获，对 supported roster 中的 agent 运行 `libra agent enable --agent <name>`；这会安装提供商 hook 配置。要禁用捕获，运行 `libra agent disable --agent <name>`。
 
 ## 提供商和事件
 
-两个提供商都暴露相同的七个 Claude-Code 风格生命周期事件：
+Claude Code 与 Codex 暴露相同的七个 Claude-Code 风格生命周期事件（Codex 额外转发 `subagent-start` / `subagent-end`）：
 
 | 事件 | 触发条件 |
 |-------|---------|
@@ -58,8 +63,14 @@ libra hooks claude stop
 # Claude Code SessionEnd hook
 libra hooks claude session-end
 
-# Gemini SessionStart hook
-libra hooks gemini session-start
+# Codex SessionStart hook（AG-19 采集路径）
+libra hooks codex session-start
+
+# Codex SubagentStart hook（原生子代理边界）
+libra hooks codex subagent-start
+
+# Gemini hooks 会被拒绝并给出提示（uninstall-only，AG-17）：
+#   libra hooks gemini <event>  ->  'libra agent remove gemini'
 ```
 
 由 `libra agent enable --agent claude` 安装的 Claude Code hook 配置大致如下：

@@ -120,6 +120,7 @@ structured report is always present.
 | `128` | `LBR-AGENT-010` | `internal` | `review --fix` / `investigate fix` requires the internal AgentRuntime fix bridge, which is not available | `libra review --fix` before the fix bridge lands |
 | `128` | `LBR-AGENT-011` | `internal` | Untrusted seed content cannot enter a mutating workflow without explicit approval | an issue-link seed attempting to drive a mutating fix |
 | `128` | `LBR-AGENT-012` | `internal` | External agent RPC transport failed (invoke timeout, broken pipe/unexpected exit, or malformed JSON-RPC frame); invocation withheld fail-closed | a trusted `libra-agent-*` binary exits before answering the invoked method |
+| `128` | `LBR-AGENT-013` | `internal` | Raw (un-redacted) checkpoint access/export denied without `--allow-raw`; redacted `--detail`/`--transcript` output stays available; the refusal is audited in `agent_audit_log` | `libra agent checkpoint export --raw` (or equivalent) without `--allow-raw` |
 | `9` | `LBR-WARN-001` | `warning` | Command completed with warnings | `--exit-code-on-warning` |
 
 ## Stable Codes By Category
@@ -192,6 +193,7 @@ structured report is always present.
 | `LBR-AGENT-010` | `review --fix` / `investigate fix` requires the internal AgentRuntime fix bridge, which is not available |
 | `LBR-AGENT-011` | Untrusted seed content cannot enter a mutating workflow without explicit approval |
 | `LBR-AGENT-012` | External agent RPC transport failed (invoke timeout, broken pipe/unexpected exit, or malformed JSON-RPC frame); invocation withheld fail-closed |
+| `LBR-AGENT-013` | Raw (un-redacted) checkpoint access/export denied without `--allow-raw`; redacted `--detail`/`--transcript` output stays available; the refusal is audited in `agent_audit_log` |
 
 ### Unsupported
 

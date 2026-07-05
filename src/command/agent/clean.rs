@@ -73,7 +73,9 @@ pub async fn execute_safe(args: CleanArgs, output: &OutputConfig) -> CliResult<(
         );
     }
 
-    let session_scope = session_scope_sql(args.all);
+    // Retention GC (AG-24a) always spans every stopped session; the
+    // default/temporary path keeps the `--all` scoping.
+    let session_scope = session_scope_sql(args.all || args.gc);
     let session_filter = format!("SELECT COUNT(*) AS n FROM ({session_scope}) AS scoped_sessions");
     let row = conn
         .query_one(Statement::from_string(backend, session_filter))
@@ -82,7 +84,35 @@ pub async fn execute_safe(args: CleanArgs, output: &OutputConfig) -> CliResult<(
         .ok_or_else(|| CliError::fatal("agent_session count returned no rows".to_string()))?;
     let sessions_inspected: i64 = row.try_get_by("n").unwrap_or_default();
 
-    let checkpoint_ids = temporary_checkpoint_ids(&conn, session_scope).await?;
+    let (checkpoint_ids, note): (Vec<String>, &'static str) = if args.gc {
+        // Resolve the transcript retention window (default 90). The cutoff
+        // is `created_at < now - window`. GC removes whole aged checkpoints
+        // (transcript + stderr blobs) — the append-only `agent_audit_log`
+        // is a separate table the prune engine never touches.
+        let retention_days = match args.retention_days {
+            Some(0) => {
+                return Err(CliError::command_usage(
+                    "--retention-days must be greater than 0".to_string(),
+                ));
+            }
+            Some(days) => days,
+            None => crate::internal::ai::observed_agents::compliance::retention_transcript_days()
+                .await
+                .map_err(|e| CliError::fatal(format!("read retention config: {e:#}")))?,
+        };
+        let cutoff_unix = chrono::Utc::now().timestamp() - i64::from(retention_days) * 86_400;
+        (
+            gc_expired_checkpoint_ids(&conn, session_scope, cutoff_unix).await?,
+            "retention GC dropped checkpoints older than agent.retention.transcript_days from \
+             stopped sessions; the append-only agent_audit_log was not touched",
+        )
+    } else {
+        (
+            temporary_checkpoint_ids(&conn, session_scope).await?,
+            "temporary checkpoint rows were dropped; reachable traces history was \
+             rewritten when checkpoint commits existed",
+        )
+    };
     let repo_path = util::try_get_storage_path(None)
         .map_err(|e| CliError::fatal(format!("failed to locate .libra directory: {e}")))?;
     let storage = Arc::new(ClientStorage::init(repo_path.join("objects")));
@@ -101,8 +131,7 @@ pub async fn execute_safe(args: CleanArgs, output: &OutputConfig) -> CliResult<(
             traces_ref_rewritten: prune.ref_rewritten,
             window_guard: prune.window_guard,
             object_index_rows_dropped: prune.deleted_object_index_rows,
-            note: "temporary checkpoint rows were dropped; reachable traces history was \
-                   rewritten when checkpoint commits existed",
+            note,
         },
         output,
     )
@@ -174,6 +203,39 @@ async fn table_exists(conn: &(impl ConnectionTrait + ?Sized), name: &str) -> Cli
         .await
         .map(|row| row.is_some())
         .map_err(|e| CliError::fatal(format!("failed to query sqlite_master: {e}")))
+}
+
+/// Checkpoint ids from the scoped (stopped) sessions whose `created_at`
+/// predates the retention cutoff — the AG-24a retention GC selection. All
+/// scopes are eligible (a 90-day-old committed checkpoint is as expired as
+/// a temporary one); the append-only `agent_audit_log` lives in a separate
+/// table and is never named here.
+async fn gc_expired_checkpoint_ids(
+    conn: &(impl ConnectionTrait + ?Sized),
+    session_scope: &str,
+    cutoff_unix: i64,
+) -> CliResult<Vec<String>> {
+    let backend = conn.get_database_backend();
+    let query = format!(
+        "SELECT checkpoint_id FROM agent_checkpoint \
+         WHERE created_at < ? \
+         AND session_id IN (SELECT session_id FROM ({session_scope}) AS scoped_sessions) \
+         ORDER BY created_at ASC, checkpoint_id ASC"
+    );
+    let rows = conn
+        .query_all(Statement::from_sql_and_values(
+            backend,
+            &query,
+            [cutoff_unix.into()],
+        ))
+        .await
+        .map_err(|e| CliError::fatal(format!("failed to list expired checkpoints: {e}")))?;
+    rows.into_iter()
+        .map(|row| {
+            row.try_get_by("checkpoint_id")
+                .map_err(|e| CliError::fatal(format!("failed to decode checkpoint_id: {e}")))
+        })
+        .collect()
 }
 
 async fn temporary_checkpoint_ids(

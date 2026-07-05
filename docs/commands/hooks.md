@@ -18,16 +18,17 @@ libra hooks gemini   <event>   # rejected with a hint: gemini is uninstall-only 
 ## Description
 
 `libra hooks` is the **hidden** (`hide = true` in clap) compatibility
-surface invoked by Claude Code / Gemini hook configs. Each invocation
+surface invoked by Claude Code / Codex hook configs. Each invocation
 reads a single hook event payload as JSON on stdin, validates it
 against the provider-specific schema, and records the redacted
-projection into the active `.libra/sessions/{id}/session.jsonl`.
+projection into the external-agent capture store (`agent_session` /
+`agent_checkpoint` + `refs/libra/traces`).
 
 The command is hidden because:
 
 - It is not part of the user-facing CLI contract — it must remain
   invocable by hook configs whose format is owned by the upstream
-  provider (Claude Code / Gemini), not by Libra. Treating it as a
+  provider (Claude Code / Codex), not by Libra. Treating it as a
   public surface would require freezing the JSON payload schema
   Libra-side, which is impossible because the providers can change
   the payload at any release.
@@ -36,11 +37,16 @@ The command is hidden because:
   surface for inspecting captured sessions is the `agent` sub-command
   ([agent.md](agent.md)), not `hooks`.
 
-`libra hooks codex <verb>` (AG-19) is the stable surface written into
-`$CODEX_HOME/hooks.json` by `libra agent enable --agent codex`; unlike
-the historical claude routing above it records into the AgentTraces
-capture store (`refs/libra/traces`). Codex additionally emits native
-sub-agent boundaries (`subagent-start` / `subagent-end`).
+`libra hooks claude <verb>` is the stable surface written into the
+project `.claude/settings.json` by `libra agent enable --agent
+claude-code`, and `libra hooks codex <verb>` (AG-19) is the stable
+surface written into `$CODEX_HOME/hooks.json` by `libra agent enable
+--agent codex`. Both record into the AgentTraces capture store
+(`refs/libra/traces`); claude's historical routing into the
+`refs/libra/intent` writer was retired by the Task A6.5 local capture
+smoke, which requires installed hooks to surface in `libra agent
+session/checkpoint list`. Codex additionally emits native sub-agent
+boundaries (`subagent-start` / `subagent-end`).
 
 `libra hooks gemini <verb>` no longer ingests: gemini is uninstall-only
 (AG-17), so stale hook configs installed before the demotion get an
@@ -53,8 +59,9 @@ To disable capture, run `libra agent disable --agent <name>`.
 
 ## Providers and Events
 
-Both providers expose the same seven Claude-Code-style lifecycle
-events:
+Claude Code and Codex expose the same seven Claude-Code-style
+lifecycle events (Codex additionally forwards `subagent-start` /
+`subagent-end`):
 
 | Event | Trigger |
 |-------|---------|
@@ -96,8 +103,14 @@ libra hooks claude stop
 # Claude Code SessionEnd hook
 libra hooks claude session-end
 
-# Gemini SessionStart hook
-libra hooks gemini session-start
+# Codex SessionStart hook (AG-19 capture path)
+libra hooks codex session-start
+
+# Codex SubagentStart hook (native sub-agent boundary)
+libra hooks codex subagent-start
+
+# Gemini hooks are rejected with a hint (uninstall-only, AG-17):
+#   libra hooks gemini <event>  ->  'libra agent remove gemini'
 ```
 
 The Claude Code hook config installed by `libra agent enable --agent

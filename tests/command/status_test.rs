@@ -1033,6 +1033,51 @@ async fn test_status_normal_reports_untracked_directory_without_descending() {
     );
 }
 
+/// Regression (2026-07-05): the no-descend directory marker must follow
+/// git semantics — an untracked directory whose entire contents are
+/// skip-listed (`.libra`/`.git`) or ignored holds no visible untracked
+/// file and must not be reported at all. Pre-fix, `?? dir/` appeared for
+/// directories containing only a nested `.libra` (e.g. test harnesses'
+/// `.libra-test-home/`), breaking every clean-tree assertion downstream.
+#[tokio::test]
+#[serial]
+async fn test_status_hides_untracked_directory_with_only_skiplisted_content() {
+    let test_dir = tempdir().unwrap();
+    test::setup_with_new_libra_in(test_dir.path()).await;
+    let _guard = test::ChangeDirGuard::new(test_dir.path());
+
+    // Only skip-listed / empty contents: a nested `.libra` with a file,
+    // a nested `.git`, and an empty subdirectory.
+    fs::create_dir_all("fake-home/.libra/vault-keys").unwrap();
+    fs::write("fake-home/.libra/vault-keys/key", "opaque").unwrap();
+    fs::create_dir_all("fake-home/.git").unwrap();
+    fs::write("fake-home/.git/config", "x").unwrap();
+    fs::create_dir_all("fake-home/.config").unwrap();
+    // Control: a sibling with one real untracked file IS reported.
+    fs::create_dir_all("real-dir").unwrap();
+    fs::write("real-dir/file.txt", "visible").unwrap();
+
+    let mut output = Vec::new();
+    status_execute_inner(
+        StatusArgs {
+            short: true,
+            ..Default::default()
+        },
+        &mut output,
+    )
+    .await
+    .expect("status -s");
+    let output_str = String::from_utf8(output).unwrap();
+    assert!(
+        !output_str.contains("fake-home"),
+        "directory with only skip-listed content must stay invisible: {output_str}"
+    );
+    assert!(
+        output_str.lines().any(|line| line == "?? real-dir/"),
+        "directory with a visible untracked file is still reported: {output_str}"
+    );
+}
+
 #[tokio::test]
 #[serial]
 async fn test_status_normal_untracked_directories_are_sorted() {

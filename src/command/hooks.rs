@@ -1,20 +1,23 @@
-//! `libra hooks <provider> <subcommand>` — compatibility entry point invoked
-//! by hook configurations the existing `HookProvider`s install (Claude Code's
-//! `.claude/settings.json`, Gemini's hooks). Adds the `Commands::Hooks(...)`
-//! variant promised in `docs/development/commands/_general.md` (sections 1.2 and 6.1).
+//! `libra hooks <provider> <subcommand>` — the stable entry point invoked
+//! by hook configurations the `HookProvider`s install (Claude Code's
+//! `.claude/settings.json`, Codex's `$CODEX_HOME/hooks.json`). Adds the
+//! `Commands::Hooks(...)` variant promised in
+//! `docs/development/commands/_general.md` (sections 1.2 and 6.1).
 //!
-//! Phase 1.1: this entry point currently delegates to the canonical
-//! `process_hook_event_from_stdin`, which writes to `refs/libra/intent`
-//! (`HookTarget::AiIntent`). Phase 1.5 will refactor that helper to take a
-//! [`HookTarget`] and route `libra agent hooks <agent>` through the same
-//! plumbing with `HookTarget::AgentTraces`. The user-facing surface stays
-//! unchanged.
+//! Both installed surfaces (`hooks claude`, `hooks codex`) route to the
+//! external-agent capture path (`HookTarget::AgentTraces`,
+//! `refs/libra/traces` + `agent_session`/`agent_checkpoint`), matching the
+//! first-batch capture contract in `docs/development/tracing/agent.md`.
+//! Claude historically routed to the `refs/libra/intent` writer
+//! (`HookTarget::AiIntent`); that drift was recorded in plan.md Task A4
+//! and resolved by Task A6.5 when the real-CLI capture smoke exposed it
+//! (an installed claude hook produced no `agent session list` row).
 
 use clap::{Args, Subcommand};
 
 use crate::{
     internal::ai::hooks::{
-        HookTarget, process_hook_event_from_stdin, process_hook_event_with_target,
+        HookTarget, process_hook_event_with_target,
         provider::ProviderHookCommand,
         providers::{claude_provider, codex, codex_provider},
     },
@@ -113,13 +116,26 @@ impl ProviderHookSubcommand {
 
 pub async fn execute_safe(args: HooksArgs, _output: &OutputConfig) -> CliResult<()> {
     match args.command {
+        // A6.5: the installed claude surface records into the AgentTraces
+        // capture path (`refs/libra/traces` + `agent_session` /
+        // `agent_checkpoint`), same as codex below — the first-batch
+        // capture contract requires `agent session/checkpoint list` to see
+        // real claude sessions driven through the installed hooks.
         HooksProviderSubcommand::Claude { command } => {
-            run_provider_hook(claude_provider(), command).await
+            let cmd = command.as_command();
+            let expected_kind = cmd.lifecycle_event_kind();
+            process_hook_event_with_target(
+                cmd,
+                expected_kind,
+                claude_provider(),
+                HookTarget::AgentTraces,
+            )
+            .await
+            .map_err(|err| CliError::fatal(format!("hook ingestion failed: {err}")))
         }
         // AG-19: codex hook entries route to the AgentTraces capture path
         // (`refs/libra/traces`) — the stable installed surface per the
-        // Codex capture contract, unlike claude's historical AiIntent
-        // routing above.
+        // Codex capture contract.
         HooksProviderSubcommand::Codex { command } => {
             let cmd = command.as_command();
             let expected_kind = cmd.lifecycle_event_kind();
@@ -161,15 +177,4 @@ pub async fn execute_safe(args: HooksArgs, _output: &OutputConfig) -> CliResult<
              previously captured gemini sessions stay readable",
         )),
     }
-}
-
-async fn run_provider_hook(
-    provider: &'static dyn crate::internal::ai::hooks::provider::HookProvider,
-    sub: ProviderHookSubcommand,
-) -> CliResult<()> {
-    let cmd = sub.as_command();
-    let expected_kind = cmd.lifecycle_event_kind();
-    process_hook_event_from_stdin(cmd, expected_kind, provider)
-        .await
-        .map_err(|err| CliError::fatal(format!("hook ingestion failed: {err}")))
 }

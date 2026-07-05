@@ -163,7 +163,18 @@ fn scan_workdir(
                     && is_top_level_path(&relative)
                     && !tracked.has_descendant(&relative)
                 {
-                    scan.untracked.push(directory_marker(&relative));
+                    // Git only reports an untracked directory when it holds
+                    // at least one visible untracked file. A directory whose
+                    // entire contents are skip-listed (`.libra`/`.git`) or
+                    // ignored must stay invisible — e.g. test harnesses'
+                    // `.libra-test-home/` holding only a nested `.libra`.
+                    // The probe stops at the first qualifying file, so the
+                    // no-descend perf win survives for real content; an
+                    // unreadable directory is conservatively reported (we
+                    // cannot verify it is empty, and git reports it too).
+                    if untracked_dir_has_visible_file(workdir, &path) {
+                        scan.untracked.push(directory_marker(&relative));
+                    }
                     continue;
                 }
                 pending_dirs.push(path);
@@ -198,6 +209,42 @@ fn scan_file(
         scan.untracked.push(relative.to_path_buf());
     }
     Ok(())
+}
+
+/// Whether an untracked top-level directory contains at least one visible
+/// (non-skip-listed, non-ignored) file — the git precondition for showing
+/// the collapsed `dir/` marker. Walks lazily and returns at the first hit;
+/// any read error makes the answer `true` (report rather than silently
+/// hide something we could not inspect).
+fn untracked_dir_has_visible_file(workdir: &Path, dir: &Path) -> bool {
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(current) = pending.pop() {
+        let entries = match std::fs::read_dir(&current) {
+            Ok(entries) => entries,
+            Err(_) => return true,
+        };
+        for entry in entries {
+            let Ok(entry) = entry else { return true };
+            let name = entry.file_name();
+            if name == OsStr::new(util::ROOT_DIR) || name == OsStr::new(util::GIT_DIR) {
+                continue;
+            }
+            let Ok(file_type) = entry.file_type() else {
+                return true;
+            };
+            let path = entry.path();
+            if util::check_gitignore(&workdir.to_path_buf(), &path) {
+                continue;
+            }
+            if file_type.is_file() {
+                return true;
+            }
+            if file_type.is_dir() {
+                pending.push(path);
+            }
+        }
+    }
+    false
 }
 
 fn list_error(path: &Path, source: io::Error) -> StatusError {

@@ -738,6 +738,15 @@ pub fn builtin_migrations() -> Vec<Migration> {
             include_str!("../../../sql/migrations/2026070802_agent_checkpoint_paging.sql"),
             include_str!("../../../sql/migrations/2026070802_agent_checkpoint_paging_down.sql"),
         ),
+        // AG-24a (plan.md Task A8.5): append-only `agent_audit_log` for raw
+        // checkpoint access/export. The `_down` deliberately preserves audit
+        // data (freezes writes rather than dropping) — see the .sql headers.
+        sql_migration(
+            2026070803,
+            "agent_audit_log",
+            include_str!("../../../sql/migrations/2026070803_agent_audit_log.sql"),
+            include_str!("../../../sql/migrations/2026070803_agent_audit_log_down.sql"),
+        ),
     ]
 }
 
@@ -866,9 +875,9 @@ mod tests {
         // `builtin_migrations()` so silent registry regressions surface
         // here in addition to `tests/db_migration_test.rs`.
         let runner = builtin_runner().expect("CEX-12.5 builtin registry must build clean");
-        assert_eq!(runner.len(), 22);
+        assert_eq!(runner.len(), 23);
         assert!(!runner.is_empty());
-        assert_eq!(runner.max_registered_version(), Some(2026070802));
+        assert_eq!(runner.max_registered_version(), Some(2026070803));
     }
 
     #[test]

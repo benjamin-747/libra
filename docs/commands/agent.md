@@ -56,6 +56,7 @@ for any other non-roster agent — return an actionable unsupported error.
 | `checkpoint list` | List captured checkpoints |
 | `checkpoint show <id>` | Show checkpoint metadata |
 | `checkpoint rewind <id>` | Inspect or apply a working-tree rewind for one checkpoint |
+| `checkpoint export <id>` | Export a checkpoint's transcript. Redacted by default (no authorization); raw (un-redacted) export requires `--allow-raw --raw` and is recorded in the append-only `agent_audit_log` (`LBR-AGENT-013` when refused without it) |
 | `clean` | Clean up temporary checkpoints from stopped sessions (prune fails closed while a checkpoint write is in flight or the traces ref reaches uncataloged commits; also drops `object_index` rows made unreachable) |
 | `doctor` | Diagnose hook installation and capture state; detect (and with `--repair` fix) checkpoint-store inconsistencies |
 | `push` | Push `refs/libra/traces` to a remote (`--force-rewrite` for the non-fast-forward push after a `clean` prune, using force-with-lease) |
@@ -77,6 +78,9 @@ for any other non-roster agent — return an actionable unsupported error.
 | `--remote <name>` | `push` | Select the remote used for pushing agent trace refs |
 | `--force-rewrite` | `push` | Allow the non-fast-forward push that follows a local `clean` prune (the traces ref is Libra-managed and rewritten as a whole chain); uses force-with-lease against the last tip this repository pushed — never an unconditional force — so a remote rewritten elsewhere still fails closed |
 | `--dry-run` | `checkpoint rewind` | Show the impact without modifying files; this is the default |
+| `--allow-raw` / `--raw` | `checkpoint export` | Authorize + request a raw (un-redacted) export; without `--allow-raw` a `--raw` request is refused (`LBR-AGENT-013`) and audited |
+| `--justification <text>` / `-o <path>` | `checkpoint export` | Audit justification and output file for a raw export |
+| `--gc` / `--retention-days <n>` | `clean` | Retention GC: drop checkpoints from stopped sessions older than `agent.retention.transcript_days` (default 90; override with `--retention-days`); never touches `agent_audit_log` |
 | `--apply` | `checkpoint rewind` | Restore the working tree for the selected checkpoint |
 
 ## JSON Output

@@ -273,6 +273,7 @@ mod agent_checkpoint_export_test;
 mod agent_checkpoint_test;
 mod agent_clean_test;
 mod agent_erasure_test;
+mod agent_fix_bridge_test;
 mod agent_help_test;
 mod agent_push_test;
 mod agent_roster_test;

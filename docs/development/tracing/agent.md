@@ -1835,7 +1835,7 @@ rg -n "claudecode|claude-code|libra-agent-|agent list|agent add|agent remove|Lif
 
 ## 还未实现的功能
 
-> **2026-07-08 A0-01 现状复核**：对下表逐项做了源码核对（10 路并行调查，回指 `file:line` 锚点），确认本表**据实、无超前声明**。复核结论的任务状态表（哪些是 `继续实现`、哪些是 `文档守卫`）记录在 [`docs/development/plan/plan-20260708.md`](../plan/plan-20260708.md) 的「A0-01 现状复核结果」小节：真实实现项为 A0-02/03/04/06/07/08/09，文档守卫项为 A0-05/10/11。任一表项状态变化时，两处必须同步刷新。进度：**A0-02 已实现**（subagent 边界物化独立 `scope='subagent'` checkpoint）；**A0-03 已实现**（`LBR-AGENT-008` hook envelope 校验 + `LBR-AGENT-009` checkpoint store 不一致 runtime emit）；**A0-04 已实现**（`internal::ai::run_admission` 跨进程 run-level 并发/队列强制 + `LBR-AGENT-014`）。
+> **2026-07-08 A0-01 现状复核**：对下表逐项做了源码核对（10 路并行调查，回指 `file:line` 锚点），确认本表**据实、无超前声明**。复核结论的任务状态表（哪些是 `继续实现`、哪些是 `文档守卫`）记录在 [`docs/development/plan/plan-20260708.md`](../plan/plan-20260708.md) 的「A0-01 现状复核结果」小节：真实实现项为 A0-02/03/04/06/07/08/09，文档守卫项为 A0-05/10/11。任一表项状态变化时，两处必须同步刷新。进度：**A0-02 已实现**（subagent 边界物化独立 `scope='subagent'` checkpoint）；**A0-03 已实现**（`LBR-AGENT-008` hook envelope 校验 + `LBR-AGENT-009` checkpoint store 不一致 runtime emit）；**A0-04 已实现**（`internal::ai::run_admission` 跨进程 run-level 并发/队列强制 + `LBR-AGENT-014`）；**A0-05 文档守卫已收口**（mutating fix bridge 仍为 plan-accepted deferred，`review --fix`/`investigate fix` fail-closed `LBR-AGENT-010` 由 `command_test::review_investigate_fix_json_errors` 守卫）。
 
 | 类别 | 未完成项 | 当前处理 | 参考来源 / 卡 |
 |---|---|---|---|

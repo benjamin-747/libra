@@ -4,7 +4,7 @@ use std::{
     collections::{HashMap, HashSet, VecDeque},
     io,
     io::{IsTerminal, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use clap::{Parser, ValueEnum};
@@ -281,6 +281,8 @@ pub enum StatusError {
     ListWorkdirFiles { path: PathBuf, source: io::Error },
     #[error("failed to determine working directory: {source}")]
     Workdir { source: io::Error },
+    #[error("{source}")]
+    ConfigRead { source: anyhow::Error },
 }
 
 impl From<StatusError> for CliError {
@@ -301,6 +303,9 @@ impl From<StatusError> for CliError {
             }
             StatusError::Workdir { .. } => {
                 CliError::fatal(msg).with_stable_code(StableErrorCode::RepoNotFound)
+            }
+            StatusError::ConfigRead { .. } => {
+                CliError::fatal(msg).with_stable_code(StableErrorCode::IoReadFailed)
             }
         }
     }
@@ -393,6 +398,7 @@ async fn collect_status_data(args: &StatusArgs) -> CliResult<StatusData> {
             .with_stable_code(StableErrorCode::RepoStateInvalid)
             .with_hint("this command requires a working tree; bare repositories do not have one"));
     }
+    let ignore_case = effective_ignore_case_for_status().await?;
 
     let head = Head::current_result()
         .await
@@ -406,9 +412,12 @@ async fn collect_status_data(args: &StatusArgs) -> CliResult<StatusData> {
         .await
         .map(|c| c.to_relative())
         .map_err(CliError::from)?;
-    let worktree =
-        status_untracked::collect_status_worktree_changes(args.untracked_files, args.ignored)
-            .map_err(CliError::from)?;
+    let worktree = status_untracked::collect_status_worktree_changes(
+        args.untracked_files,
+        args.ignored,
+        ignore_case,
+    )
+    .map_err(CliError::from)?;
     let mut unstaged = status_untracked::changes_to_current_directory(worktree.unstaged);
     let ignored_files = worktree
         .ignored_files
@@ -717,8 +726,17 @@ async fn compute_raw_sets() -> CliResult<(Changes, Changes)> {
     let staged = changes_to_be_committed_safe()
         .await
         .map_err(CliError::from)?;
-    let unstaged = changes_to_be_staged().map_err(CliError::from)?;
+    let ignore_case = effective_ignore_case_for_status().await?;
+    let unstaged = changes_to_be_staged_with_ignore_case(ignore_case).map_err(CliError::from)?;
     Ok((staged, unstaged))
+}
+
+async fn effective_ignore_case_for_status() -> CliResult<bool> {
+    crate::utils::path_case::effective_ignore_case()
+        .await
+        .map_err(|error| {
+            CliError::fatal(error.to_string()).with_stable_code(StableErrorCode::IoReadFailed)
+        })
 }
 
 fn dirty_cache_error(action: &str, error: anyhow::Error) -> CliError {
@@ -2562,12 +2580,28 @@ pub fn changes_to_be_staged() -> Result<Changes, StatusError> {
 /// Commands such as `add --force` or `status --ignored` can switch policies as needed.
 pub fn changes_to_be_staged_with_policy(policy: IgnorePolicy) -> Result<Changes, StatusError> {
     let workdir = util::try_working_dir().map_err(|source| StatusError::Workdir { source })?;
+    let ignore_case = effective_ignore_case_for_workdir(&workdir)?;
+    changes_to_be_staged_with_policy_and_ignore_case(policy, ignore_case)
+}
+
+pub(crate) fn changes_to_be_staged_with_ignore_case(
+    ignore_case: bool,
+) -> Result<Changes, StatusError> {
+    changes_to_be_staged_with_policy_and_ignore_case(IgnorePolicy::Respect, ignore_case)
+}
+
+fn changes_to_be_staged_with_policy_and_ignore_case(
+    policy: IgnorePolicy,
+    ignore_case: bool,
+) -> Result<Changes, StatusError> {
+    let workdir = util::try_working_dir().map_err(|source| StatusError::Workdir { source })?;
     let index_path = path::try_index().map_err(|source| StatusError::Workdir { source })?;
     let index = Index::load(&index_path).map_err(|source| StatusError::IndexLoad {
         path: index_path.clone(),
         source,
     })?;
-    let (mut visible, ignored) = changes_to_be_staged_split_with_index(&workdir, &index)?;
+    let (mut visible, ignored) =
+        changes_to_be_staged_split_with_index(&workdir, &index, ignore_case)?;
     match policy {
         IgnorePolicy::Respect => Ok(visible),
         IgnorePolicy::OnlyIgnored => Ok(ignored),
@@ -2580,32 +2614,55 @@ pub fn changes_to_be_staged_with_policy(policy: IgnorePolicy) -> Result<Changes,
 
 pub fn changes_to_be_staged_split_safe() -> Result<(Changes, Changes), StatusError> {
     let workdir = util::try_working_dir().map_err(|source| StatusError::Workdir { source })?;
-    let index_path = path::try_index().map_err(|source| StatusError::Workdir { source })?;
-    let index = Index::load(&index_path).map_err(|source| StatusError::IndexLoad {
-        path: index_path.clone(),
-        source,
-    })?;
-    changes_to_be_staged_split_with_index(&workdir, &index)
+    let ignore_case = effective_ignore_case_for_workdir(&workdir)?;
+    changes_to_be_staged_split_safe_with_ignore_case(ignore_case)
 }
 
-/// List changes to be staged with --force semantics (recurse into ignored directories)
-pub fn changes_to_be_staged_split_force() -> Result<(Changes, Changes), StatusError> {
+pub(crate) fn changes_to_be_staged_split_safe_with_ignore_case(
+    ignore_case: bool,
+) -> Result<(Changes, Changes), StatusError> {
     let workdir = util::try_working_dir().map_err(|source| StatusError::Workdir { source })?;
     let index_path = path::try_index().map_err(|source| StatusError::Workdir { source })?;
     let index = Index::load(&index_path).map_err(|source| StatusError::IndexLoad {
         path: index_path.clone(),
         source,
     })?;
-    changes_to_be_staged_split_force_with_index(&workdir, &index)
+    changes_to_be_staged_split_with_index(&workdir, &index, ignore_case)
+}
+
+/// List changes to be staged with --force semantics (recurse into ignored directories)
+pub fn changes_to_be_staged_split_force() -> Result<(Changes, Changes), StatusError> {
+    let workdir = util::try_working_dir().map_err(|source| StatusError::Workdir { source })?;
+    let ignore_case = effective_ignore_case_for_workdir(&workdir)?;
+    changes_to_be_staged_split_force_with_ignore_case(ignore_case)
+}
+
+fn effective_ignore_case_for_workdir(workdir: &Path) -> Result<bool, StatusError> {
+    crate::utils::path_case::effective_ignore_case_for_dir_sync(workdir)
+        .map_err(|source| StatusError::ConfigRead { source })
+}
+
+pub(crate) fn changes_to_be_staged_split_force_with_ignore_case(
+    ignore_case: bool,
+) -> Result<(Changes, Changes), StatusError> {
+    let workdir = util::try_working_dir().map_err(|source| StatusError::Workdir { source })?;
+    let index_path = path::try_index().map_err(|source| StatusError::Workdir { source })?;
+    let index = Index::load(&index_path).map_err(|source| StatusError::IndexLoad {
+        path: index_path.clone(),
+        source,
+    })?;
+    changes_to_be_staged_split_force_with_index(&workdir, &index, ignore_case)
 }
 
 fn changes_to_be_staged_split_force_with_index(
     workdir: &PathBuf,
     index: &Index,
+    ignore_case: bool,
 ) -> Result<(Changes, Changes), StatusError> {
     let mut visible = Changes::default();
     let mut ignored = Changes::default();
     let tracked_files = index.tracked_files();
+    let tracked_fold = tracked_files_by_fold(&tracked_files, ignore_case);
     for file in tracked_files.iter() {
         let file_str = file
             .to_str()
@@ -2634,7 +2691,8 @@ fn changes_to_be_staged_split_force_with_index(
         let file_str = file
             .to_str()
             .ok_or_else(|| StatusError::InvalidPathEncoding { path: file.clone() })?;
-        if !index.tracked(file_str, 0) {
+        if !index.tracked(file_str, 0) && !is_same_file_tracked_alias(workdir, &file, &tracked_fold)
+        {
             visible.new.push(file);
         }
     }
@@ -2642,7 +2700,8 @@ fn changes_to_be_staged_split_force_with_index(
         let file_str = file
             .to_str()
             .ok_or_else(|| StatusError::InvalidPathEncoding { path: file.clone() })?;
-        if !index.tracked(file_str, 0) {
+        if !index.tracked(file_str, 0) && !is_same_file_tracked_alias(workdir, &file, &tracked_fold)
+        {
             ignored.new.push(file);
         }
     }
@@ -2652,10 +2711,12 @@ fn changes_to_be_staged_split_force_with_index(
 fn changes_to_be_staged_split_with_index(
     workdir: &PathBuf,
     index: &Index,
+    ignore_case: bool,
 ) -> Result<(Changes, Changes), StatusError> {
     let mut visible = Changes::default();
     let mut ignored = Changes::default();
     let tracked_files = index.tracked_files();
+    let tracked_fold = tracked_files_by_fold(&tracked_files, ignore_case);
     for file in tracked_files.iter() {
         let file_str = file
             .to_str()
@@ -2683,7 +2744,8 @@ fn changes_to_be_staged_split_with_index(
         let file_str = file
             .to_str()
             .ok_or_else(|| StatusError::InvalidPathEncoding { path: file.clone() })?;
-        if !index.tracked(file_str, 0) {
+        if !index.tracked(file_str, 0) && !is_same_file_tracked_alias(workdir, &file, &tracked_fold)
+        {
             visible.new.push(file);
         }
     }
@@ -2691,11 +2753,38 @@ fn changes_to_be_staged_split_with_index(
         let file_str = file
             .to_str()
             .ok_or_else(|| StatusError::InvalidPathEncoding { path: file.clone() })?;
-        if !index.tracked(file_str, 0) {
+        if !index.tracked(file_str, 0) && !is_same_file_tracked_alias(workdir, &file, &tracked_fold)
+        {
             ignored.new.push(file);
         }
     }
     Ok((visible, ignored))
+}
+
+fn tracked_files_by_fold(tracked_files: &[PathBuf], ignore_case: bool) -> HashMap<String, PathBuf> {
+    if !ignore_case {
+        return HashMap::new();
+    }
+    tracked_files
+        .iter()
+        .map(|path| {
+            (
+                crate::utils::path_case::fold_path_key(path.to_string_lossy().as_ref()),
+                path.clone(),
+            )
+        })
+        .collect()
+}
+
+fn is_same_file_tracked_alias(
+    workdir: &Path,
+    file: &Path,
+    tracked_fold: &HashMap<String, PathBuf>,
+) -> bool {
+    let key = crate::utils::path_case::fold_path_key(file.to_string_lossy().as_ref());
+    tracked_fold.get(&key).is_some_and(|tracked| {
+        crate::utils::path_case::is_same_file_case_alias(workdir, file, tracked)
+    })
 }
 
 fn list_workdir_files_split_safe(workdir: &PathBuf) -> io::Result<(Vec<PathBuf>, Vec<PathBuf>)> {

@@ -30,6 +30,7 @@ struct WorkdirScan {
 pub(crate) fn collect_status_worktree_changes(
     untracked_mode: UntrackedFiles,
     include_ignored: bool,
+    ignore_case: bool,
 ) -> Result<StatusWorktreeChanges, StatusError> {
     let workdir = util::try_working_dir().map_err(|source| StatusError::Workdir { source })?;
     let index_path = path::try_index().map_err(|source| StatusError::Workdir { source })?;
@@ -37,7 +38,7 @@ pub(crate) fn collect_status_worktree_changes(
         path: index_path.clone(),
         source,
     })?;
-    let tracked = TrackedPaths::from_index(&index);
+    let tracked = TrackedPaths::from_index(&index, ignore_case);
     let mut unstaged = collect_tracked_worktree_changes(&workdir, &index, tracked.files())?;
     let mut ignored_files = Vec::new();
 
@@ -179,7 +180,15 @@ fn scan_workdir(
                 }
                 pending_dirs.push(path);
             } else if file_type.is_file() {
-                scan_file(&mut scan, workdir, index, &path, &relative, include_ignored)?;
+                scan_file(
+                    &mut scan,
+                    workdir,
+                    index,
+                    tracked,
+                    &path,
+                    &relative,
+                    include_ignored,
+                )?;
             }
         }
     }
@@ -191,6 +200,7 @@ fn scan_file(
     scan: &mut WorkdirScan,
     workdir: &Path,
     index: &Index,
+    tracked_paths: &TrackedPaths,
     path: &Path,
     relative: &Path,
     include_ignored: bool,
@@ -200,7 +210,8 @@ fn scan_file(
         .ok_or_else(|| StatusError::InvalidPathEncoding {
             path: relative.to_path_buf(),
         })?;
-    let tracked = index.tracked(file_str, 0);
+    let tracked =
+        index.tracked(file_str, 0) || tracked_paths.same_file_case_alias(workdir, relative);
     if util::check_gitignore(&workdir.to_path_buf(), &path.to_path_buf()) {
         if include_ignored && !tracked {
             scan.ignored.push(relative.to_path_buf());

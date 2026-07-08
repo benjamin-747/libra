@@ -33,12 +33,15 @@ use super::checkpoint::{
 };
 use crate::{
     internal::{
-        ai::investigate::{
-            DEFAULT_CLAUDE_REVIEW_MAX_BUDGET_USD, DEFAULT_INVESTIGATOR_TIMEOUT,
-            InvestigateCancelHandle, InvestigateRunCursor, InvestigateRunError,
-            InvestigateRunOutcome, InvestigateRunRequest, InvestigateRunStore,
-            InvestigateRunSummary, InvestigateTerminalState, InvestigatorSource, PauseReason,
-            is_launchable_investigator, render_untrusted_findings, run_investigate,
+        ai::{
+            investigate::{
+                DEFAULT_CLAUDE_REVIEW_MAX_BUDGET_USD, DEFAULT_INVESTIGATOR_TIMEOUT,
+                InvestigateCancelHandle, InvestigateRunCursor, InvestigateRunError,
+                InvestigateRunOutcome, InvestigateRunRequest, InvestigateRunStore,
+                InvestigateRunSummary, InvestigateTerminalState, InvestigatorSource, PauseReason,
+                is_launchable_investigator, render_untrusted_findings, run_investigate,
+            },
+            run_admission::{self, RejectedAdmission},
         },
         head::Head,
     },
@@ -239,6 +242,19 @@ fn open_store() -> CliResult<InvestigateRunStore> {
     Ok(InvestigateRunStore::new(storage.join("sessions")))
 }
 
+/// A0-04: fail-closed error when the shared review/investigate run queue is
+/// full. Carries `LBR-AGENT-014` (the same code `libra review` emits).
+fn run_queue_full_error(rejected: RejectedAdmission) -> CliError {
+    CliError::fatal(format!(
+        "too many concurrent review/investigate runs: {} active, {} queued (queue cap {}); \
+         refusing to start another",
+        rejected.active, rejected.queued, rejected.cap
+    ))
+    .with_stable_code(StableErrorCode::AgentRunQueueFull)
+    .with_hint("wait for a running review/investigate run to finish, or cancel one with `libra investigate cancel <run_id>` / `libra review cancel <run_id>`")
+    .with_hint("raise the limit with `libra config set agent.max_concurrent_runs <N>` (default 2)")
+}
+
 fn map_store_error(context: &str, error: std::io::Error) -> CliError {
     if error.kind() == std::io::ErrorKind::InvalidInput {
         CliError::command_usage(error.to_string())
@@ -387,6 +403,29 @@ async fn start(args: InvestigateStartArgs, output: &OutputConfig) -> CliResult<(
         max_turns,
         quorum,
     );
+
+    // A0-04: acquire a shared run-level admission slot (the same queue
+    // `libra review` uses). Over `agent.max_concurrent_runs` this blocks in
+    // the queue; a full queue fails closed with `LBR-AGENT-014`. Held for the
+    // run's lifetime (RAII), released on completion / cancel / failure.
+    let max_runs = run_admission::max_concurrent_runs().await.map_err(|e| {
+        CliError::fatal(format!(
+            "failed to resolve {}: {e}",
+            run_admission::MAX_CONCURRENT_RUNS_KEY
+        ))
+    })?;
+    let _run_slot = match run_admission::admit_blocking(
+        &store.runs_root(),
+        max_runs,
+        run_admission::RUN_QUEUE_CAP,
+        None,
+    )
+    .await
+    .map_err(|e| CliError::fatal(format!("run admission failed: {e}")))?
+    {
+        Ok(slot) => slot,
+        Err(rejected) => return Err(run_queue_full_error(rejected)),
+    };
 
     if !output.quiet && !output.is_json() {
         println!(

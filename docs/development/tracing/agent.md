@@ -517,7 +517,7 @@ flowchart TD
     | 并发 checkpoint write | 1 路（writer lease） | 否 | 排队等待，CAS 冲突重试 |
     | 并发 prune | 1 路 | 否 | 返回"清理进行中"提示 |
     | 并发 doctor | 1 路 | 否 | 返回"诊断进行中"提示 |
-    | 并发 review/investigate run | settings `max_concurrent_runs`（默认 2） | 是 | ⚠️ **目标形态：** 排队，队列上限 10，超限返回 actionable error。**当前未实现（enforcement 延后）**——run-level 并发/队列上限尚无代码强制，仅 `max_reviewers_per_run`（下一行）已生效；见「还未实现的功能」。 |
+    | 并发 review/investigate run | settings `max_concurrent_runs`（默认 2） | 是 | **A0-04 已实现**：`internal::ai::run_admission` 的跨进程文件信号量（`agent-runs/.admission/{slots,queue}` + flock）在 `review`/`investigate` run 启动前占用 slot；超过 `agent.max_concurrent_runs` 时进入队列阻塞等待，队列超过 10（`RUN_QUEUE_CAP`）返回 `LBR-AGENT-014` fail-closed；slot 由 RAII + PID stale-reclaim 在完成/取消/失败/进程死亡时释放。**强制仅限 Unix**（`flock` 依赖，同 `RunLock`）；非 Unix 上 admission 为 no-op（无限制，同 A0-04 前行为）。FIFO 公平：有等待者时新到达 run 排到队尾，freed slot 优先促进最老等待者。与 `max_reviewers_per_run`（run 内 reviewer 并发）正交。 |
     | 单次 review run 内并发 reviewer | settings `max_reviewers_per_run`（默认 4） | 是 | 超限 reviewer 排队，不影响已启动 reviewer |
     | 单次 investigate run 内并发 agent turn | 1（strict round-robin） | 否 | 排队等待当前 agent turn 完成 |
     | reviewer 进程树深度 | 1（reviewer 本身可 spawn 子进程，但不允许子进程再 spawn reviewer） | 否 | fail-closed，终止 reviewer 并标 terminal error |
@@ -899,6 +899,7 @@ entire 当前是 1 stable（`claude-code`）+ 7 preview（`codex`、`copilot-cli
 | `ERR_AGENT_RPC_TRANSPORT_FAILED` | `LBR-AGENT-012`（A3 实现切片补分配） | rpc invoke timeout、broken pipe/子进程提前退出、malformed JSON-RPC frame（IO hard-cap 超限仍归 `007`） | AG-18 |
 | `ERR_AGENT_TRACES_PUSH_DIVERGED` | 未分配（A5 方案 (b) 时在其 slice 分配） | prune/rewrite 后 `agent push` 遇 `refs/libra/traces` 非快进发散（仅当 plan.md A5 选定方案 (b) 稳定错误码 + 重推出口时启用；方案 (a) force-with-lease 等价语义无需新码） | AG-20 |
 | `ERR_AGENT_RAW_ACCESS_DENIED` | `LBR-AGENT-013`（A8.5 实现切片分配） | `checkpoint export --raw`（或等价 raw 未脱敏访问）未带 `--allow-raw` → fail-closed 拒绝；redacted `--detail`/`--transcript` 路径无需授权门；拒绝与授权均写 `agent_audit_log`（granted 0/1） | AG-24a |
+| `ERR_AGENT_RUN_QUEUE_FULL` | `LBR-AGENT-014` | **（A0-04 已 emit）** review/investigate run 启动时共享 admission 队列已满（活动 run 超过 `agent.max_concurrent_runs` 且等待队列达 cap 10）→ fail-closed 拒绝（exit 128，`--json` 带 `error_code`）；slot 由 RAII + PID stale-reclaim 释放 | A0-04 / §12 |
 
 真实 `LBR-*` 编号以 `docs/error-codes.md` 为准；新增/重命名须同步 `compat_error_codes_doc_sync`，并补同码不得映射多个 variant 的唯一性守卫。
 
@@ -1235,7 +1236,7 @@ libra 当前 `agent_checkpoint` 表关注 `parent_commit`、`tree_oid`、`metada
 | `agent.retention.stderr_days` | `30` | integer | stderr/debug blob 保留期 | settings | GC 后保留聚合计数 |
 | `agent.retention.findings_days` | `90` | integer | review/investigate run state 与 findings（`.libra/sessions/agent-runs/<run_id>/`、findings blob/manifest/DB 行）保留期 | settings | 到期由 `clean --gc` 或 review/investigate clean 清理；不触碰 `agent_audit_log` |
 | `agent.max_transcript_read_bytes` | `268435456` | integer | detail/transcript 路径单次读取上限（256 MiB） | settings | 超限必须截断 + redaction + `truncated:true` |
-| `agent.max_concurrent_runs` | `2` | integer | review/investigate run 并发上限 | settings | ⚠️ 设置键已定义但**当前未强制**（enforcement 延后，见「还未实现的功能」）；目标：队列上限 10，超限 actionable error |
+| `agent.max_concurrent_runs` | `2` | integer | review/investigate run 并发上限 | settings | **A0-04 已强制**（`internal::ai::run_admission`）：超限进队列（cap 10）阻塞，队满返回 `LBR-AGENT-014` fail-closed；`0` 视为非法（clamp 到 1，config 解析拒绝 0） |
 | `agent.max_reviewers_per_run` | `4` | integer | 单次 review reviewer 并发 | settings | 超限排队，不静默丢弃 |
 
 授权流：
@@ -1834,7 +1835,7 @@ rg -n "claudecode|claude-code|libra-agent-|agent list|agent add|agent remove|Lif
 
 ## 还未实现的功能
 
-> **2026-07-08 A0-01 现状复核**：对下表逐项做了源码核对（10 路并行调查，回指 `file:line` 锚点），确认本表**据实、无超前声明**。复核结论的任务状态表（哪些是 `继续实现`、哪些是 `文档守卫`）记录在 [`docs/development/plan/plan-20260708.md`](../plan/plan-20260708.md) 的「A0-01 现状复核结果」小节：真实实现项为 A0-02/03/04/06/07/08/09，文档守卫项为 A0-05/10/11。任一表项状态变化时，两处必须同步刷新。进度：**A0-02 已实现**（subagent 边界物化独立 `scope='subagent'` checkpoint）；**A0-03 已实现**（`LBR-AGENT-008` hook envelope 校验 + `LBR-AGENT-009` checkpoint store 不一致 runtime emit）。
+> **2026-07-08 A0-01 现状复核**：对下表逐项做了源码核对（10 路并行调查，回指 `file:line` 锚点），确认本表**据实、无超前声明**。复核结论的任务状态表（哪些是 `继续实现`、哪些是 `文档守卫`）记录在 [`docs/development/plan/plan-20260708.md`](../plan/plan-20260708.md) 的「A0-01 现状复核结果」小节：真实实现项为 A0-02/03/04/06/07/08/09，文档守卫项为 A0-05/10/11。任一表项状态变化时，两处必须同步刷新。进度：**A0-02 已实现**（subagent 边界物化独立 `scope='subagent'` checkpoint）；**A0-03 已实现**（`LBR-AGENT-008` hook envelope 校验 + `LBR-AGENT-009` checkpoint store 不一致 runtime emit）；**A0-04 已实现**（`internal::ai::run_admission` 跨进程 run-level 并发/队列强制 + `LBR-AGENT-014`）。
 
 | 类别 | 未完成项 | 当前处理 | 参考来源 / 卡 |
 |---|---|---|---|
@@ -1853,7 +1854,6 @@ rg -n "claudecode|claude-code|libra-agent-|agent list|agent add|agent remove|Lif
 | 架构测试 | 新 provider 增量守卫 | `compat_agent_architecture_guard` / `compat_agent_capability_matrix_pin` 已落地；新增 provider 时继续同步 SQL CHECK、registry、docs 和 tests/INDEX。 | entire `agent/architecture_test.go` / ongoing guard |
 | 测试装配 | 无当前 AG target 孤儿 | `tests/command/agent_checkpoint_test.rs` 已接入 `command_test`，AG-19/20/22/23/24a top-level targets 已在 `tests/INDEX.md` 登记。 | 漂移修正 / AG-20 |
 | 数据模型 | cloud mirror tombstone propagation for agent capture data | 本地 erasure 已重写 `refs/libra/traces` 并删除 DB/object_index；当前未启用 D1/R2 agent capture mirror，不声明 cloud tombstone 已覆盖。 | AG-24a / future cloud mirror |
-| 资源预算 | run-level 并发/队列上限（`agent.max_concurrent_runs`=2、队列上限 10）未强制 | 仅 `max_reviewers_per_run`（单 run 内 reviewer 并发）已生效；run-level 并发/队列 settings 已定义但当前无代码强制（§12 预算表 / settings 表已据实标注）。 | 强制补强项 §12 / future enforcement |
 | 多 Agent | review `manual_attach` 命令面、`findings_oid` 对象持久化、`--checkpoint <id>` scoped review | read-only review workflow 已落地；`manual_attach` 目前恒空（无填充命令面）、`findings_oid` 恒 null（findings.md 落盘但未写对象指针）、`--checkpoint <id>` scoped review fail-closed 返回 unimplemented。 | E8-libra / future parity |
 | 外部插件安全 | `agent.external_agents.trusted_dirs` / `env_allowlist_extra` / `libra agent rpc trust --dir <path>` | AG-18 provenance（sha256/device/inode/mtime）+ world-writable 父目录拒绝已落地；受信目录 allowlist、额外 env 透传 settings 与 `--dir` flag 尚未实现（trust 接受任意父目录非 world-writable 的 on-PATH 二进制）。 | 落地执行补充规格 §2 / future |
 | 合规实现 | review/investigate findings-GC（`agent.retention.findings_days`） | `retention_findings_days()` 已定义但当前无 GC 消费者（`clean --gc` 仅处理 transcript/stderr 保留期）；findings run-state GC 待 run-state retention 策略新增删除命令后落地。 | AG-24a / future GC |

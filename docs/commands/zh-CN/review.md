@@ -98,12 +98,20 @@ libra review clean --run <run_id>
 libra review clean --all
 ```
 
+## 并发
+
+`review` 与 `investigate` 在仓库范围内共享一个 run 级并发预算。最多
+`agent.max_concurrent_runs` 个 run（默认 `2`）同时执行；预算占满时启动的 run 会进入队列
+阻塞等待（阻塞前台进程，`Ctrl-C` 取消等待并让队列向后推进）。若等待队列已达上限（10），
+新 run 会以稳定错误码 `LBR-AGENT-014`（退出码 128）fail-closed 拒绝，而非超出预算。用
+`libra config set agent.max_concurrent_runs <N>` 调整上限。
+
 ## 退出状态
 
 - `0` —— run 落在 `success`、`partial`、`timeout` 或 `cancelled`（terminal
   state 会在输出中报告）；子命令执行成功。
-- 非零 —— 用法错误、run 落在 `error` terminal state、未知 run id，或
-  `--fix`（稳定错误码 `LBR-AGENT-010`）。
+- 非零 —— 用法错误、run 落在 `error` terminal state、未知 run id、
+  `--fix`（稳定错误码 `LBR-AGENT-010`），或 run 队列已满（`LBR-AGENT-014`）。
 
 ## 另请参阅
 

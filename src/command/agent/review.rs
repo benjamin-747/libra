@@ -41,6 +41,7 @@ use crate::{
                 ReviewRunSummary, ReviewTerminalState, ReviewerOutcome, ReviewerSource,
                 cancel_orphaned_run, is_launchable_reviewer, render_untrusted_findings, run_review,
             },
+            run_admission::{self, RejectedAdmission},
         },
         head::Head,
     },
@@ -378,6 +379,20 @@ struct ReviewerReportRow {
     launch_error: Option<String>,
 }
 
+/// A0-04: fail-closed error when the shared run queue is full — more than
+/// `agent.max_concurrent_runs` runs are active and the wait queue is at its
+/// cap. Carries `LBR-AGENT-014` so automation can detect the back-pressure.
+fn run_queue_full_error(rejected: RejectedAdmission) -> CliError {
+    CliError::fatal(format!(
+        "too many concurrent review/investigate runs: {} active, {} queued (queue cap {}); \
+         refusing to start another",
+        rejected.active, rejected.queued, rejected.cap
+    ))
+    .with_stable_code(StableErrorCode::AgentRunQueueFull)
+    .with_hint("wait for a running review/investigate run to finish, or cancel one with `libra review cancel <run_id>` / `libra investigate cancel <run_id>`")
+    .with_hint("raise the limit with `libra config set agent.max_concurrent_runs <N>` (default 2)")
+}
+
 async fn run(args: ReviewRunCliArgs, output: &OutputConfig) -> CliResult<()> {
     if args.fix {
         return Err(fix_bridge_unavailable_error());
@@ -450,6 +465,31 @@ async fn run(args: ReviewRunCliArgs, output: &OutputConfig) -> CliResult<()> {
         starting_sha.clone(),
         reviewers,
     );
+
+    // A0-04: acquire a shared run-level admission slot before doing any
+    // expensive setup. Over `agent.max_concurrent_runs` this blocks in the
+    // queue until a slot frees; a full queue fails closed with
+    // `LBR-AGENT-014`. The slot is held for the whole run and released on
+    // completion / cancel / failure (RAII) so the concurrency budget is never
+    // overrun or permanently occupied.
+    let max_runs = run_admission::max_concurrent_runs().await.map_err(|e| {
+        CliError::fatal(format!(
+            "failed to resolve {}: {e}",
+            run_admission::MAX_CONCURRENT_RUNS_KEY
+        ))
+    })?;
+    let _run_slot = match run_admission::admit_blocking(
+        &store.runs_root(),
+        max_runs,
+        run_admission::RUN_QUEUE_CAP,
+        None,
+    )
+    .await
+    .map_err(|e| CliError::fatal(format!("run admission failed: {e}")))?
+    {
+        Ok(slot) => slot,
+        Err(rejected) => return Err(run_queue_full_error(rejected)),
+    };
 
     if !output.quiet && !output.is_json() {
         println!(

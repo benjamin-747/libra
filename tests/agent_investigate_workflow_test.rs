@@ -1413,3 +1413,81 @@ async fn corrupt_started_at_terminates_closed() {
     );
     assert_no_leaked_workspace(&repo);
 }
+
+// ---------------------------------------------------------------------------
+// A0-04: run-level admission / queue enforcement (shared with review)
+// ---------------------------------------------------------------------------
+
+fn seed_admission(repo: &Path, slots: usize, queued: usize) {
+    let admission = repo
+        .join(".libra")
+        .join("sessions")
+        .join("agent-runs")
+        .join(".admission");
+    let pid = std::process::id().to_string();
+    for (dir, n) in [("slots", slots), ("queue", queued)] {
+        let d = admission.join(dir);
+        std::fs::create_dir_all(&d).expect("create admission subdir");
+        for i in 0..n {
+            std::fs::write(d.join(format!("seed-{dir}-{i:03}")), &pid).expect("write ticket");
+        }
+    }
+}
+
+/// A0-04: `libra investigate` honours the same shared run-level admission
+/// queue as `libra review` — a full queue (2 active + 10 queued) refuses a
+/// fresh run fail-closed with `LBR-AGENT-014` (exit 128) on both surfaces.
+#[test]
+fn run_level_concurrency_rejects_when_queue_full() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let repo = init_committed_repo(temp.path());
+    seed_admission(&repo, 2, 10);
+
+    let output = run_libra(
+        &[
+            "investigate",
+            "start",
+            "--topic",
+            "why is X slow",
+            "--agent",
+            "codex",
+        ],
+        &repo,
+        &[],
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(128),
+        "a full queue must refuse fatally (128): stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(
+        stderr.contains("LBR-AGENT-014"),
+        "stderr must carry the run-queue-full code: {stderr}"
+    );
+
+    let output = run_libra(
+        &[
+            "investigate",
+            "start",
+            "--topic",
+            "why is X slow",
+            "--agent",
+            "codex",
+        ],
+        &repo,
+        &[("LIBRA_ERROR_JSON", "1")],
+    );
+    assert_eq!(output.status.code(), Some(128));
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let json_start = stderr
+        .rfind("\n{")
+        .map(|index| index + 1)
+        .or_else(|| stderr.find('{'))
+        .expect("structured stderr must carry a JSON error report");
+    let report: serde_json::Value =
+        serde_json::from_str(stderr[json_start..].trim()).expect("JSON error report parses");
+    assert_eq!(report["error_code"], "LBR-AGENT-014");
+    assert_eq!(report["exit_code"], 128);
+}

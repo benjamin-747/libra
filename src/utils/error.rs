@@ -281,6 +281,12 @@ pub enum StableErrorCode {
     /// `ERR_AGENT_RAW_ACCESS_DENIED`). The refusal is itself audited in
     /// `agent_audit_log` (granted = 0).
     AgentRawAccessDenied,
+    /// A `review` / `investigate` run was refused because the shared
+    /// run-level admission queue is full (more than `agent.max_concurrent_runs`
+    /// runs are active and the wait queue already holds its cap). Fail-closed
+    /// so callers never silently overrun the concurrency budget (A0-04, E10
+    /// `ERR_AGENT_RUN_QUEUE_FULL`).
+    AgentRunQueueFull,
 }
 
 impl Serialize for StableErrorCode {
@@ -337,6 +343,7 @@ impl StableErrorCode {
             Self::AgentUntrustedSeedForMutation => "LBR-AGENT-011",
             Self::AgentRpcTransportFailed => "LBR-AGENT-012",
             Self::AgentRawAccessDenied => "LBR-AGENT-013",
+            Self::AgentRunQueueFull => "LBR-AGENT-014",
         }
     }
 
@@ -387,7 +394,8 @@ impl StableErrorCode {
             | Self::AgentFixBridgeUnavailable
             | Self::AgentUntrustedSeedForMutation
             | Self::AgentRpcTransportFailed
-            | Self::AgentRawAccessDenied => CliErrorCategory::Internal,
+            | Self::AgentRawAccessDenied
+            | Self::AgentRunQueueFull => CliErrorCategory::Internal,
         }
     }
 
@@ -527,6 +535,9 @@ impl StableErrorCode {
             }
             Self::AgentRawAccessDenied => {
                 "Raw (un-redacted) checkpoint access/export denied without --allow-raw; redacted --detail/--transcript output stays available."
+            }
+            Self::AgentRunQueueFull => {
+                "Too many concurrent review/investigate runs are active and the wait queue is full; the run was refused fail-closed."
             }
         }
     }
@@ -1909,6 +1920,7 @@ mod tests {
             ),
             (StableErrorCode::AgentRpcTransportFailed, "LBR-AGENT-012"),
             (StableErrorCode::AgentRawAccessDenied, "LBR-AGENT-013"),
+            (StableErrorCode::AgentRunQueueFull, "LBR-AGENT-014"),
         ] {
             assert_eq!(variant.as_str(), code);
         }

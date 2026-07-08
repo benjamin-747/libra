@@ -109,6 +109,15 @@ token to pass back via `--cursor`, `null` once the listing is exhausted.
 Pages are ordered newest-first (`started_at` / `created_at` descending,
 with the row id as tiebreaker).
 
+Each checkpoint row carries a `scope`. `committed` checkpoints are written at
+turn/session boundaries (`Stop` / `SessionEnd`) and carry the redacted
+transcript snapshot. `subagent` checkpoints are materialized at an observed
+agent's sub-agent boundary (`SubagentStart` / `SubagentEnd`): they are
+independent checkpoints — listable, showable, exportable, prunable, and
+doctor-visible — that link back to the enclosing turn via
+`parent_checkpoint_id`, so nested runs are first-class rather than buried as
+metadata on the main checkpoint.
+
 `agent checkpoint show --json` additionally reports a `layout` summary
 (`e4-libra`, `legacy-v1` for pre-AG-20 checkpoints, or `unknown` when the
 checkpoint tree is not locally readable) with the manifest roles, the

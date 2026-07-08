@@ -1418,3 +1418,195 @@ async fn class3_drifted_object_index_row_updated_in_place() {
     assert_store_clean(&repo.doctor_json(false));
     assert_store_clean(&repo.doctor_json(true));
 }
+
+// ---------------------------------------------------------------------------
+// A0-02 — subagent-scope crash-window-B repair parity
+// ---------------------------------------------------------------------------
+
+async fn subagent_parent_link(repo: &DoctorRepo, checkpoint_id: &str) -> Option<String> {
+    let conn = repo.db().await;
+    let backend = conn.get_database_backend();
+    let row = conn
+        .query_one(Statement::from_sql_and_values(
+            backend,
+            "SELECT parent_checkpoint_id FROM agent_checkpoint WHERE checkpoint_id = ?",
+            vec![checkpoint_id.into()],
+        ))
+        .await
+        .expect("query parent_checkpoint_id")
+        .expect("subagent row present");
+    row.try_get_by::<Option<String>, _>("parent_checkpoint_id")
+        .unwrap()
+}
+
+/// A subagent-scope orphan (traces commit present, catalog row deleted) is
+/// auto-repaired by `doctor --repair`, which rebuilds a first-class
+/// `scope='subagent'` row — including its `parent_checkpoint_id` linkage —
+/// from the commit's metadata.json, at parity with the committed class-2 path.
+#[tokio::test]
+async fn class2_missing_subagent_catalog_row_repaired() {
+    let repo = DoctorRepo::init();
+
+    // User commit so the checkpoint's parent_commit is Some(head).
+    std::fs::write(repo.repo.join("seed.txt"), "seed\n").expect("write seed file");
+    assert!(repo.run(&["add", "seed.txt"], None).status.success());
+    assert!(repo.run(&["commit", "-m", "seed"], None).status.success());
+
+    let transcript = repo.write_claude_transcript(TRANSCRIPT);
+    let session = "sess-subagent-doctor";
+    // codex owns the session; Stop writes a committed parent…
+    assert!(
+        repo.hook(
+            "codex",
+            "session-start",
+            &repo.envelope("SessionStart", session, &transcript),
+        )
+        .status
+        .success(),
+        "codex session-start"
+    );
+    assert!(
+        repo.hook(
+            "codex",
+            "stop",
+            &repo.envelope("Stop", session, &transcript)
+        )
+        .status
+        .success(),
+        "codex stop"
+    );
+    // …and a SubagentStop boundary materialises the subagent checkpoint.
+    let out = repo.hook(
+        "codex",
+        "subagent-end",
+        &repo.envelope("SubagentStop", session, &transcript),
+    );
+    assert!(out.status.success(), "subagent-end: {}", describe(&out));
+
+    let rows = repo.checkpoint_rows().await;
+    let subagent = rows
+        .iter()
+        .find(|r| r.scope == "subagent")
+        .cloned()
+        .expect("a scope='subagent' checkpoint row");
+    let parent_link_before = subagent_parent_link(&repo, &subagent.checkpoint_id).await;
+    assert!(
+        parent_link_before.is_some(),
+        "subagent checkpoint must link back to the committed parent"
+    );
+
+    // Fabricate window B for the subagent row.
+    repo.exec_sql(
+        "DELETE FROM agent_checkpoint WHERE checkpoint_id = ?",
+        vec![subagent.checkpoint_id.clone().into()],
+    )
+    .await;
+
+    // Detection-only: reported, not repaired.
+    let report = repo.doctor_json(false);
+    assert!(
+        findings(&report)
+            .iter()
+            .any(|f| f["checkpoint_id"] == json!(subagent.checkpoint_id)
+                && f["inconsistency_type"] == json!("missing_catalog_row")
+                && f["repaired"] == json!(false)),
+        "subagent window B must be detected without repair: {report}"
+    );
+
+    // Repair: a scope='subagent' row comes back with its linkage intact.
+    let report = repo.doctor_json(true);
+    assert!(
+        findings(&report)
+            .iter()
+            .any(|f| f["checkpoint_id"] == json!(subagent.checkpoint_id)
+                && f["repaired"] == json!(true)),
+        "subagent row must be auto-repaired: {report}"
+    );
+    let rows = repo.checkpoint_rows().await;
+    let repaired = rows
+        .iter()
+        .find(|r| r.checkpoint_id == subagent.checkpoint_id)
+        .expect("subagent row reinserted");
+    assert_eq!(
+        repaired.scope, "subagent",
+        "repaired row must keep scope='subagent'"
+    );
+    assert_eq!(
+        subagent_parent_link(&repo, &subagent.checkpoint_id).await,
+        parent_link_before,
+        "parent_checkpoint_id linkage must survive the repair"
+    );
+
+    // Idempotent.
+    assert_store_clean(&repo.doctor_json(true));
+}
+
+// ---------------------------------------------------------------------------
+// A0-02 — subagent checkpoint sidecar must not leak the transcript path
+// ---------------------------------------------------------------------------
+
+/// Resolve the OID of a named entry among parsed `(mode, name, oid)` tree rows.
+fn subagent_entry_oid(entries: &[(String, String, String)], name: &str) -> String {
+    entries
+        .iter()
+        .find(|(_, n, _)| n == name)
+        .map(|(_, _, oid)| oid.clone())
+        .unwrap_or_else(|| panic!("tree entry '{name}' missing"))
+}
+
+/// A0-02 (Codex re-review): a `SubagentStop` whose envelope carries a
+/// transcript path must NOT persist that local path in the subagent
+/// checkpoint's syncable `events/lifecycle.jsonl` blob — the writer clears
+/// `session_ref` on the sidecar event before serialization.
+#[tokio::test]
+async fn subagent_checkpoint_sidecar_omits_transcript_path() {
+    let repo = DoctorRepo::init();
+    let transcript = repo.write_claude_transcript(TRANSCRIPT);
+    let transcript_str = transcript.to_string_lossy().to_string();
+    let session = "sess-subagent-sidecar";
+
+    assert!(
+        repo.hook(
+            "codex",
+            "session-start",
+            &repo.envelope("SessionStart", session, &transcript),
+        )
+        .status
+        .success(),
+        "codex session-start"
+    );
+    let out = repo.hook(
+        "codex",
+        "subagent-end",
+        &repo.envelope("SubagentStop", session, &transcript),
+    );
+    assert!(out.status.success(), "subagent-end: {}", describe(&out));
+
+    let subagent = repo
+        .checkpoint_rows()
+        .await
+        .into_iter()
+        .find(|r| r.scope == "subagent")
+        .expect("a scope='subagent' checkpoint row");
+
+    // Walk root → checkpoint/<id[:2]>/<id[2:]> → events → lifecycle.jsonl.
+    let id = &subagent.checkpoint_id;
+    let root = tree_entries(&repo, &subagent.tree_oid);
+    let checkpoint = tree_entries(&repo, &subagent_entry_oid(&root, "checkpoint"));
+    let prefix = tree_entries(&repo, &subagent_entry_oid(&checkpoint, &id[..2]));
+    let inner = tree_entries(&repo, &subagent_entry_oid(&prefix, &id[2..]));
+    let events = tree_entries(&repo, &subagent_entry_oid(&inner, "events"));
+    let blob_oid = subagent_entry_oid(&events, "lifecycle.jsonl");
+    let (blob_type, blob) = read_loose(&repo, &blob_oid);
+    assert_eq!(blob_type, "blob");
+    let content = String::from_utf8_lossy(&blob);
+
+    assert!(
+        !content.contains(&transcript_str),
+        "events/lifecycle.jsonl must not leak the transcript path '{transcript_str}':\n{content}"
+    );
+    assert!(
+        !content.contains("session_ref"),
+        "the subagent sidecar event must not carry session_ref:\n{content}"
+    );
+}

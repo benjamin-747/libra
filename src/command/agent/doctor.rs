@@ -100,7 +100,11 @@ use crate::{
             history::{self, HistoryManager},
             hooks::{
                 providers::{claude_provider, gemini_provider},
-                runtime::{AgentCheckpointRow, insert_agent_checkpoint_row_idempotent},
+                runtime::{
+                    AgentCheckpointRow, SubagentCheckpointRow,
+                    insert_agent_checkpoint_row_idempotent,
+                    insert_subagent_checkpoint_row_idempotent,
+                },
             },
             observed_agents::{AgentStability, PREVIEW_SPECS, STABLE_PROMOTED_SPECS},
         },
@@ -199,6 +203,21 @@ enum RepairPlan {
         checkpoint_id: String,
         session_id: String,
         parent_commit: Option<String>,
+        tree_oid: String,
+        metadata_blob_oid: String,
+        traces_commit: String,
+        created_at: i64,
+    },
+    /// Class 2, subagent scope (A0-02): probe-first idempotent catalog
+    /// INSERT rebuilding a `scope='subagent'` row with its linkage columns.
+    InsertSubagentCatalogRow {
+        checkpoint_id: String,
+        session_id: String,
+        parent_commit: Option<String>,
+        parent_checkpoint_id: Option<String>,
+        subagent_session_id: Option<String>,
+        tool_use_id: Option<String>,
+        description: Option<String>,
         tree_oid: String,
         metadata_blob_oid: String,
         traces_commit: String,
@@ -372,6 +391,17 @@ struct CheckpointMetadataProbe {
     created_at: i64,
     #[serde(default)]
     scope: Option<String>,
+    // A0-02: subagent-scope checkpoints carry these linkage fields flat in
+    // `metadata.json` so a class-2 (crash-window-B) repair can rebuild a
+    // first-class `scope='subagent'` catalog row instead of leaving it manual.
+    #[serde(default)]
+    parent_checkpoint_id: Option<String>,
+    #[serde(default)]
+    subagent_session_id: Option<String>,
+    #[serde(default)]
+    tool_use_id: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
 }
 
 /// `Libra-*` trailers from a traces checkpoint commit message.
@@ -1194,6 +1224,41 @@ async fn execute_repair(
                 }
             }
         }
+        RepairPlan::InsertSubagentCatalogRow {
+            checkpoint_id,
+            session_id,
+            parent_commit,
+            parent_checkpoint_id,
+            subagent_session_id,
+            tool_use_id,
+            description,
+            tree_oid,
+            metadata_blob_oid,
+            traces_commit,
+            created_at,
+        } => {
+            let row = SubagentCheckpointRow {
+                checkpoint_id,
+                session_id,
+                parent_commit: parent_commit.as_deref(),
+                parent_checkpoint_id: parent_checkpoint_id.as_deref(),
+                subagent_session_id: subagent_session_id.as_deref(),
+                tool_use_id: tool_use_id.as_deref(),
+                description: description.as_deref(),
+                tree_oid,
+                metadata_blob_oid,
+                traces_commit,
+                created_at: *created_at,
+            };
+            match insert_subagent_checkpoint_row_idempotent(conn, &row).await {
+                Ok(_) => finding.repaired = true,
+                Err(err) => {
+                    finding
+                        .detail
+                        .push_str(&format!("; repair failed: {err:#}"));
+                }
+            }
+        }
         RepairPlan::UpdateCatalogRow {
             checkpoint_id,
             tree_oid,
@@ -1289,16 +1354,16 @@ async fn build_class2_plan(
             ));
         }
     };
-    // The committed-checkpoint writer is the only source of window-B rows;
-    // its rows are always scope='committed' (which is also what the shared
-    // idempotent INSERT stamps). Anything else is unexpected enough that a
-    // human should look.
+    // Class-2 rows come from either the committed writer (scope='committed')
+    // or, since A0-02, the subagent writer (scope='subagent'); both stamp
+    // `metadata.json` with the fields needed to rebuild their catalog row.
+    // Any other scope is unexpected enough that a human should look.
     let scope = metadata
         .scope
         .clone()
         .or_else(|| rc.scope_trailer.clone())
         .unwrap_or_else(|| "committed".to_string());
-    if scope != "committed" {
+    if scope != "committed" && scope != "subagent" {
         return Ok((
             format!("{base}; scope '{scope}' is not auto-repairable — manual review"),
             RepairPlan::Manual,
@@ -1311,6 +1376,24 @@ async fn build_class2_plan(
                 metadata.session_id
             ),
             RepairPlan::Manual,
+        ));
+    }
+    if scope == "subagent" {
+        return Ok((
+            format!("{base}; scope='subagent' row can be rebuilt from the commit's metadata.json"),
+            RepairPlan::InsertSubagentCatalogRow {
+                checkpoint_id: checkpoint_id.to_string(),
+                session_id: metadata.session_id,
+                parent_commit: rc.parent_commit_trailer.clone(),
+                parent_checkpoint_id: metadata.parent_checkpoint_id,
+                subagent_session_id: metadata.subagent_session_id,
+                tool_use_id: metadata.tool_use_id,
+                description: metadata.description,
+                tree_oid: rc.root_tree.clone(),
+                metadata_blob_oid: metadata_blob.to_string(),
+                traces_commit: rc.commit.clone(),
+                created_at: metadata.created_at,
+            },
         ));
     }
     Ok((

@@ -21,6 +21,8 @@ libra diff [--algorithm <name>] [--output <file>]
 
 Diff 引擎支持多种算法（默认 histogram，myers 和 myersMinimal 作为替代）。输出可以通过 `--output` 写入文件，并提供若干摘要格式（`--name-only`、`--name-status`、`--numstat`、`--stat`、`--shortstat`、`--summary`）。可用 `-s`/`--no-patch` 配合 `--exit-code` 做仅状态检查；`-z`/`--null` 让 name/numstat 输出以 NUL 终止，便于安全脚本解析。
 
+当工作树存在未合并冲突条目时，默认工作区 diff 会输出冲突感知的 `diff --cc <path>` 记录，而不是把冲突文件误报为从 `/dev/null` 新增。
+
 Pathspec 参数会将 diff 过滤为只显示匹配文件或目录中的更改。
 
 ## 选项
@@ -183,6 +185,8 @@ libra --json diff --staged
 - `--no-ext-diff` 本次运行禁用外部 diff 驱动，强制内建引擎；`--ext-diff` 允许已配置的 `diff.external` 外部驱动生成 patch（按 Git GIT_EXTERNAL_DIFF 协议，仅 patch 输出模式；`--stat`/name/numstat/`-s`/`--check` 绕过）
 - `--exit-code` 仍打印 diff，但存在差异时退出码为 `1`
 - `--quiet` 抑制 stdout，并用退出码 `1` 表示存在差异
+
+未合并冲突路径在默认工作区 diff 中以 `diff --cc <path>` 头显示。
 
 `--output <file>` 将人类可读输出写入文件。在 `--quiet` 模式下仍会写入文件，但存在差异仍返回退出码 `1`。在 `--json` 模式下，该标志会被忽略，输出始终发送到 stdout。
 

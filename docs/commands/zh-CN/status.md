@@ -16,6 +16,8 @@ libra status [OPTIONS]
 
 该命令计算 HEAD、索引和工作树之间的 diff，将文件分类到 staged、unstaged 和 untracked 类别。它支持多种输出格式：人类可读长格式（默认，也可用 `--long` 显式选择）、短格式（`--short`）、机器可读 porcelain 格式，以及供代理消费的结构化 JSON。
 
+在 merge、rebase、cherry-pick 冲突期间，未合并的 index stage 条目会按冲突输出，而不会被误报为未跟踪文件。porcelain v1/短格式使用 Git 风格 XY 码（例如 `UU conflict.txt`）；porcelain v2 输出带 stage mode 与 object id 的 `u <XY> ...` 记录。
+
 ## 选项
 
 ### `-s, --short`
@@ -142,6 +144,12 @@ A  src/feature.rs
 M  src/lib.rs
  M README.md
 ?? notes.txt
+```
+
+未合并冲突：
+
+```text
+UU conflict.txt
 ```
 
 `--quiet` 会抑制所有 `stdout` 输出。与 `--exit-code` 组合时，它作为静默脏状态检查（脏时 exit 1，干净时 exit 0）。

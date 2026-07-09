@@ -28,7 +28,10 @@ use similar::{Algorithm, ChangeTag, TextDiff};
 use tempfile::NamedTempFile;
 
 use crate::{
-    command::{get_target_commit, load_object},
+    command::{
+        get_target_commit, load_object,
+        unmerged::{self, UnmergedEntry},
+    },
     internal::{config::ConfigKv, head::Head},
     utils::{
         error::{CliError, CliResult, StableErrorCode},
@@ -592,7 +595,8 @@ async fn apply_sparse_view_filter(result: &mut DiffOutput) {
     }
     result.files.retain(|file| {
         // A rename's old path counts as in-view too (either side visible).
-        view.contains_str(&file.path)
+        file.raw_diff.starts_with("diff --cc ")
+            || view.contains_str(&file.path)
             || file
                 .rename_from
                 .as_deref()
@@ -1223,6 +1227,7 @@ async fn run_diff(args: &DiffArgs, output: &OutputConfig) -> Result<DiffOutput, 
     let new_side = resolve_diff_side(&args.new, args.staged, true, &index).await?;
 
     let paths: Vec<PathBuf> = args.pathspec.iter().map(util::to_workdir_path).collect();
+    let diff_pathspecs = paths.clone();
     let worktree_entries = new_side.worktree_entries.clone();
     // Separate copy for the external-diff pass (the one above is moved into the
     // diff closure below). Lets the GIT_EXTERNAL_DIFF protocol report a zero hash
@@ -1299,6 +1304,9 @@ async fn run_diff(args: &DiffArgs, output: &OutputConfig) -> Result<DiffOutput, 
     }
 
     let mut files: Vec<DiffFileStat> = diff_output.iter().map(parse_diff_item).collect();
+    if args.old.is_none() && args.new.is_none() && !args.staged {
+        apply_unmerged_worktree_diff(&mut files, &index, &diff_pathspecs)?;
+    }
 
     // Resolve the external diff driver (`diff.external`) when it should drive this
     // run: a patch-body output mode (not `--stat`/name/numstat/summary/`-s`/
@@ -1984,6 +1992,144 @@ fn read_worktree_blob_content(path_buf: &PathBuf) -> Result<Vec<u8>, DiffError> 
         path: absolute.display().to_string(),
         detail: e.to_string(),
     })
+}
+
+fn apply_unmerged_worktree_diff(
+    files: &mut Vec<DiffFileStat>,
+    index: &Index,
+    pathspecs: &[PathBuf],
+) -> Result<(), DiffError> {
+    let entries = unmerged::collect(index)
+        .into_iter()
+        .filter(|entry| unmerged::path_matches(&entry.path, pathspecs))
+        .collect::<Vec<_>>();
+    if entries.is_empty() {
+        return Ok(());
+    }
+
+    let unmerged_paths = entries
+        .iter()
+        .map(|entry| entry.path.to_string_lossy().into_owned())
+        .collect::<HashSet<_>>();
+    files.retain(|file| !unmerged_paths.contains(&file.path));
+    for entry in entries {
+        files.push(build_unmerged_diff_file(&entry)?);
+    }
+    files.sort_by(|left, right| left.path.cmp(&right.path));
+    Ok(())
+}
+
+fn build_unmerged_diff_file(entry: &UnmergedEntry) -> Result<DiffFileStat, DiffError> {
+    let path = entry.path.to_string_lossy().into_owned();
+    let raw_diff = render_unmerged_combined_diff(entry)?;
+    Ok(DiffFileStat {
+        path,
+        status: "modified".to_string(),
+        insertions: 0,
+        deletions: 0,
+        hunks: Vec::new(),
+        raw_diff,
+        rename_from: None,
+        similarity: None,
+        binary: None,
+    })
+}
+
+fn render_unmerged_combined_diff(entry: &UnmergedEntry) -> Result<String, DiffError> {
+    let path = entry.path.to_string_lossy();
+    let ours = entry.stage(2);
+    let theirs = entry.stage(3);
+    let ours_text = stage_text(ours.as_ref())?;
+    let theirs_text = stage_text(theirs.as_ref())?;
+    let worktree_text = read_optional_worktree_text(&entry.path)?;
+    let ours_lines = line_count(&ours_text);
+    let theirs_lines = line_count(&theirs_text);
+    let worktree_lines = line_count(&worktree_text);
+    let ours_hash = abbreviated_stage_hash(ours.as_ref());
+    let theirs_hash = abbreviated_stage_hash(theirs.as_ref());
+
+    let mut rendered = format!(
+        "diff --cc {path}\nindex {ours_hash},{theirs_hash}..0000000\n--- a/{path}\n+++ b/{path}\n@@@ -1,{ours_lines} -1,{theirs_lines} +1,{worktree_lines} @@@\n"
+    );
+    for (prefix, line) in combined_worktree_lines(&worktree_text, &ours_text, &theirs_text) {
+        rendered.push_str(prefix);
+        rendered.push_str(line);
+        rendered.push('\n');
+    }
+    Ok(rendered)
+}
+
+fn combined_worktree_lines<'a>(
+    worktree: &'a str,
+    ours: &'a str,
+    theirs: &'a str,
+) -> Vec<(&'static str, &'a str)> {
+    let ours_lines = ours.lines().collect::<Vec<_>>();
+    let theirs_lines = theirs.lines().collect::<Vec<_>>();
+    let mut ours_pos = 0;
+    let mut theirs_pos = 0;
+
+    worktree
+        .lines()
+        .map(|line| {
+            let matches_ours = ours_lines.get(ours_pos).is_some_and(|ours| *ours == line);
+            let matches_theirs = theirs_lines
+                .get(theirs_pos)
+                .is_some_and(|theirs| *theirs == line);
+            match (matches_ours, matches_theirs) {
+                (true, true) => {
+                    ours_pos += 1;
+                    theirs_pos += 1;
+                    ("  ", line)
+                }
+                (true, false) => {
+                    ours_pos += 1;
+                    (" +", line)
+                }
+                (false, true) => {
+                    theirs_pos += 1;
+                    ("+ ", line)
+                }
+                (false, false) => ("++", line),
+            }
+        })
+        .collect()
+}
+
+fn stage_text(
+    stage: Option<&crate::command::unmerged::UnmergedStage>,
+) -> Result<String, DiffError> {
+    match stage {
+        Some(stage) => {
+            Ok(String::from_utf8_lossy(&load_repo_blob_content(&stage.hash)?).into_owned())
+        }
+        None => Ok(String::new()),
+    }
+}
+
+fn read_optional_worktree_text(path: &PathBuf) -> Result<String, DiffError> {
+    let absolute = util::workdir_to_absolute(path);
+    match std::fs::read(&absolute) {
+        Ok(data) => Ok(String::from_utf8_lossy(&data).into_owned()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(String::new()),
+        Err(error) => Err(DiffError::FileRead {
+            path: absolute.display().to_string(),
+            detail: error.to_string(),
+        }),
+    }
+}
+
+fn abbreviated_stage_hash(stage: Option<&crate::command::unmerged::UnmergedStage>) -> String {
+    stage
+        .map(|stage| {
+            let full = stage.hash.to_string();
+            full.get(..7).unwrap_or(&full).to_string()
+        })
+        .unwrap_or_else(|| "0000000".to_string())
+}
+
+fn line_count(text: &str) -> usize {
+    text.lines().count().max(1)
 }
 
 /// Whether the textual patch body is shown for this invocation. The

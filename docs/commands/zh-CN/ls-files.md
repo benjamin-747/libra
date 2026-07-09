@@ -35,7 +35,7 @@ resolve-undo 和 sparse-checkout 集成仍未公开。
 | `--stage` | 以 stage 样式输出记录；若存在冲突阶段也会显示。 |
 | `-s` | stage 样式输出的短别名：`<mode> <object> <stage>\t<path>`。 |
 | `--abbrev[=<n>]` | 在 `-s`/`--stage` 输出里把对象名截断为 `<n>` 位 hex。bare `--abbrev` 即 7；`--abbrev=<n>` 指定长度（取值必须用 `=` 形式，故 bare `--abbrev` 不会吞掉后续 pathspec）。Libra 定长截断而非计算最短唯一前缀。 |
-| `-t` | 在每行路径前加状态标签：`H`（cached）、`R`（removed/deleted）、`C`（modified/changed）、`?`（other/untracked）、`M`（unmerged）。 |
+| `-t` | 在每行路径前加状态标签：`H`（cached）、`R`（removed/deleted）、`C`（modified/changed）、`?`（other/untracked）、`M`（unmerged）。未合并路径不会被隐藏；stage 1/2/3 每个条目都会按 `M <path>` 输出，与 Git 的冲突可见性一致。 |
 | `-u`, `--unmerged` | 只列出未合并（冲突）条目——索引 stage 1/2/3——以 stage 样式输出。 |
 | `--full-name` | 为 Git 兼容而接受。Libra 始终输出仓库根相对路径（即 `git --full-name` 形式），因此该标志为 no-op。 |
 | `--others`、`-o` | 显示未跟踪的工作区文件。 |
@@ -86,6 +86,17 @@ tracked.txt
 
 ```text
 100644 4f3c2d1a7b8c9d0e1234567890abcdef12345678 0	tracked.txt
+```
+
+未合并条目既可作为 stage 行显示，也可作为 tagged 行显示：
+
+```text
+100644 1111111111111111111111111111111111111111 1	conflict.txt
+100644 2222222222222222222222222222222222222222 2	conflict.txt
+100644 3333333333333333333333333333333333333333 3	conflict.txt
+M conflict.txt
+M conflict.txt
+M conflict.txt
 ```
 
 `-z` 保持相同的记录内容，但用 NUL 而不是换行结尾，适合脚本安全消费：

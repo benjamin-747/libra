@@ -56,6 +56,7 @@ top-level `[[test]]` entries in `Cargo.toml`.
 | `keyring_feature_gate_guard.rs` | `compat_keyring_feature_gate_guard` | lore.md 2.7 门控：`keyring` feature 不入 default、依赖 optional + VENDORED libdbus（静态——终端用户无运行时 dylib 依赖）、后端模块 cfg 门控（发布构建显式 --features keyring 启用） |
 | `fastcdc_feature_gate_guard.rs` | `compat_fastcdc_feature_gate_guard` | lore.md §6 硬约束：`fastcdc` FastCDC media chunking feature 不入 default、保持纯 in-tree（`fastcdc = []` 无捆绑依赖）、`utils::media`/`command::media` 模块声明与 cli.rs `Media` 变体+dispatch 保持 `#[cfg(feature = "fastcdc")]` 门控 |
 | `subface_labels.rs` | CG-01 (plan-20260708) | `COMPATIBILITY.md` 的「Sub-face compatibility grading」矩阵机器校验：子面标签限于固定五枚举、被分级命令集钉死在 P0/P1 触达面且不脱离 `src/cli.rs::Commands`、同一命令不得把一个子面分进两档、每个 `unsupported` 子面带治理编号并与 `_compatibility.md` 登记表双向一致 |
+| `conflict_status_diff_test.rs` | P0-01 (plan-20260708) | merge / rebase / cherry-pick 内容冲突后，`status --porcelain` 输出 `UU`、porcelain v2 输出 `u UU ...`、`ls-files -u/-t` 暴露 stage 1/2/3，`diff` 使用 `diff --cc` 而不是把冲突文件误报为 `/dev/null` 新增 |
 
 ## Authoring guidelines
 

@@ -22,7 +22,10 @@ use git_internal::{
 };
 use serde::Serialize;
 
-use super::{merge, stash, status_untracked};
+use super::{
+    merge, stash, status_untracked,
+    unmerged::{self, UnmergedEntry},
+};
 use crate::{
     command::calc_file_blob_hash,
     internal::{
@@ -346,6 +349,7 @@ struct StatusData {
     has_commits: bool,
     staged: Changes,
     unstaged: Changes,
+    unmerged: Vec<UnmergedEntry>,
     ignored_files: Vec<PathBuf>,
     stash_count: Option<usize>,
     upstream: Option<UpstreamInfo>,
@@ -383,7 +387,10 @@ async fn sequence_notice() -> Option<String> {
 
 impl StatusData {
     fn is_dirty(&self) -> bool {
-        !self.staged.is_empty() || !self.unstaged.is_empty() || self.merge_state.is_some()
+        !self.staged.is_empty()
+            || !self.unstaged.is_empty()
+            || self.merge_state.is_some()
+            || !self.unmerged.is_empty()
     }
 }
 
@@ -419,6 +426,18 @@ async fn collect_status_data(args: &StatusArgs) -> CliResult<StatusData> {
     )
     .map_err(CliError::from)?;
     let mut unstaged = status_untracked::changes_to_current_directory(worktree.unstaged);
+    let unmerged = unmerged::collect(&worktree.index)
+        .into_iter()
+        .map(|entry| {
+            let current_path = util::workdir_to_current(&entry.path);
+            entry.with_path(current_path)
+        })
+        .collect::<Vec<_>>();
+    let unmerged_paths = unmerged
+        .iter()
+        .map(|entry| entry.path.clone())
+        .collect::<HashSet<_>>();
+    unstaged.new.retain(|path| !unmerged_paths.contains(path));
     let ignored_files = worktree
         .ignored_files
         .into_iter()
@@ -488,6 +507,7 @@ async fn collect_status_data(args: &StatusArgs) -> CliResult<StatusData> {
         has_commits,
         staged,
         unstaged,
+        unmerged,
         ignored_files,
         stash_count,
         upstream,
@@ -1122,6 +1142,7 @@ async fn run_status_cache_mode(args: &StatusArgs, output: &OutputConfig) -> CliR
         head_oid: head_oid_hash,
         staged,
         unstaged,
+        unmerged: vec![],
         ignored_files: vec![],
         stash_count: None,
         upstream,
@@ -1206,6 +1227,7 @@ async fn render_status_to_writer(
             output_porcelain_v2(
                 &data.staged,
                 &data.unstaged,
+                &data.unmerged,
                 &data.ignored_files,
                 data.porcelain_v2.as_ref(),
                 args.null_terminated,
@@ -1224,9 +1246,10 @@ async fn render_status_to_writer(
                     &mut buffer,
                 )?;
             }
-            output_porcelain(
+            output_porcelain_with_unmerged(
                 &data.staged,
                 &data.unstaged,
+                &data.unmerged,
                 args.null_terminated,
                 &mut buffer,
             )?;
@@ -1260,6 +1283,7 @@ async fn render_status_to_writer(
         output_short_format_with_config(
             &data.staged,
             &data.unstaged,
+            &data.unmerged,
             output,
             args.null_terminated,
             &mut buffer,
@@ -1344,7 +1368,7 @@ fn render_human_status(
     }
 
     // Clean tree
-    if data.staged.is_empty() && data.unstaged.is_empty() {
+    if data.staged.is_empty() && data.unstaged.is_empty() && data.unmerged.is_empty() {
         writeln!(buffer, "nothing to commit, working tree clean").map_err(write_error)?;
         return Ok(());
     }
@@ -1410,6 +1434,35 @@ fn render_human_status(
         }
     }
 
+    if !data.unmerged.is_empty() {
+        writeln!(buffer, "Unmerged paths:").map_err(write_error)?;
+        writeln!(buffer, "  use \"libra add <file>...\" to mark resolution")
+            .map_err(write_error)?;
+        writeln!(
+            buffer,
+            "  use \"libra merge --abort\" or the active sequencer abort command to abort"
+        )
+        .map_err(write_error)?;
+        let entries = data
+            .unmerged
+            .iter()
+            .map(|entry| {
+                (
+                    unmerged_human_label(entry),
+                    entry.path.display().to_string(),
+                )
+            })
+            .collect::<Vec<_>>();
+        if args.column {
+            render_columnated_labeled_entries(buffer, &entries, colored::Color::BrightRed)?;
+        } else {
+            for (label, path) in entries {
+                let line = format!("\t{label} {path}");
+                writeln!(buffer, "{}", line.bright_red()).map_err(write_error)?;
+            }
+        }
+    }
+
     // Untracked
     if !data.unstaged.new.is_empty() {
         writeln!(buffer, "Untracked files:").map_err(write_error)?;
@@ -1447,6 +1500,18 @@ fn render_human_status(
     }
 
     Ok(())
+}
+
+fn unmerged_human_label(entry: &UnmergedEntry) -> &'static str {
+    match entry.xy() {
+        ('D', 'D') => "both deleted:",
+        ('A', 'U') => "added by us:",
+        ('U', 'D') => "deleted by them:",
+        ('U', 'A') => "added by them:",
+        ('D', 'U') => "deleted by us:",
+        ('A', 'A') => "both added:",
+        _ => "both modified:",
+    }
 }
 
 /// Build a flat list of (label, path) for human output.
@@ -1716,6 +1781,13 @@ fn build_status_json(data: &StatusData, _args: &StatusArgs) -> serde_json::Value
             "deleted": paths_to_json(&data.unstaged.deleted),
             "renamed": renamed_to_json(&data.unstaged.renamed),
         },
+        "unmerged": paths_to_json(
+            &data
+                .unmerged
+                .iter()
+                .map(|entry| entry.path.clone())
+                .collect::<Vec<_>>()
+        ),
         "untracked": paths_to_json(&data.unstaged.new),
         "ignored": paths_to_json(&data.ignored_files),
         "is_clean": !data.is_dirty(),
@@ -1752,7 +1824,17 @@ pub fn output_porcelain(
     null_terminated: bool,
     writer: &mut impl Write,
 ) -> CliResult<()> {
-    let status_list = generate_short_format_status(staged, unstaged);
+    output_porcelain_with_unmerged(staged, unstaged, &[], null_terminated, writer)
+}
+
+fn output_porcelain_with_unmerged(
+    staged: &Changes,
+    unstaged: &Changes,
+    unmerged: &[UnmergedEntry],
+    null_terminated: bool,
+    writer: &mut impl Write,
+) -> CliResult<()> {
+    let status_list = generate_short_format_status_with_unmerged(staged, unstaged, unmerged);
     let write_err = |e: io::Error| CliError::io(format!("failed to write status output: {e}"));
     for (file, staged_status, unstaged_status) in status_list {
         write!(
@@ -1880,6 +1962,7 @@ fn build_porcelain_v2_data(index: Index, head_oid: Option<&ObjectHash>) -> Porce
 fn output_porcelain_v2(
     staged: &Changes,
     unstaged: &Changes,
+    unmerged: &[UnmergedEntry],
     ignored: &[PathBuf],
     metadata: Option<&PorcelainV2Data>,
     null_terminated: bool,
@@ -1889,6 +1972,10 @@ fn output_porcelain_v2(
         metadata.ok_or_else(|| CliError::internal("missing porcelain v2 metadata for status"))?;
     let zero_hash = zero_hash_str();
     let write_err = |e: io::Error| CliError::io(format!("failed to write status output: {e}"));
+
+    for entry in unmerged {
+        write_unmerged_porcelain_v2(entry, &zero_hash, null_terminated, writer)?;
+    }
 
     let status_list = generate_short_format_status(staged, unstaged);
     for (file, staged_status, unstaged_status) in status_list {
@@ -1967,6 +2054,59 @@ fn zero_hash_str() -> String {
     ObjectHash::zero_str(get_hash_kind())
 }
 
+fn write_unmerged_porcelain_v2(
+    entry: &UnmergedEntry,
+    zero_hash: &str,
+    null_terminated: bool,
+    writer: &mut impl Write,
+) -> CliResult<()> {
+    let write_err = |e: io::Error| CliError::io(format!("failed to write status output: {e}"));
+    let (staged_status, unstaged_status) = entry.xy();
+    let mode = |stage| {
+        entry
+            .stage(stage)
+            .map(|stage| format_mode(stage.mode))
+            .unwrap_or_else(|| "000000".to_string())
+    };
+    let hash = |stage| {
+        entry
+            .stage(stage)
+            .map(|stage| stage.hash.to_string())
+            .unwrap_or_else(|| zero_hash.to_string())
+    };
+    write!(
+        writer,
+        "u {}{} N... {} {} {} {} {} {} {} {}",
+        staged_status,
+        unstaged_status,
+        mode(1),
+        mode(2),
+        mode(3),
+        format_mode(get_unmerged_worktree_mode(&entry.path)),
+        hash(1),
+        hash(2),
+        hash(3),
+        entry.path.display()
+    )
+    .map_err(write_err)?;
+    if null_terminated {
+        writer.write_all(b"\0").map_err(write_err)?;
+    } else {
+        writer.write_all(b"\n").map_err(write_err)?;
+    }
+    Ok(())
+}
+
+fn get_unmerged_worktree_mode(file_path: &std::path::Path) -> u32 {
+    let workdir_path = current_to_workdir(file_path);
+    let abs_path = util::workdir_to_absolute(&workdir_path);
+    if std::fs::symlink_metadata(&abs_path).is_ok() {
+        get_worktree_mode(file_path)
+    } else {
+        0
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Short format
 // ---------------------------------------------------------------------------
@@ -1975,6 +2115,14 @@ fn zero_hash_str() -> String {
 pub fn generate_short_format_status(
     staged: &Changes,
     unstaged: &Changes,
+) -> Vec<(std::path::PathBuf, char, char)> {
+    generate_short_format_status_with_unmerged(staged, unstaged, &[])
+}
+
+fn generate_short_format_status_with_unmerged(
+    staged: &Changes,
+    unstaged: &Changes,
+    unmerged: &[UnmergedEntry],
 ) -> Vec<(std::path::PathBuf, char, char)> {
     let mut file_status: HashMap<PathBuf, (char, char)> = HashMap::new();
 
@@ -2017,6 +2165,9 @@ pub fn generate_short_format_status(
     for file in &unstaged.new {
         file_status.insert(file.clone(), ('?', '?'));
     }
+    for entry in unmerged {
+        file_status.insert(entry.path.clone(), entry.xy());
+    }
 
     let mut sorted_files: Vec<_> = file_status.iter().collect();
     sorted_files.sort_by(|a, b| a.0.cmp(b.0));
@@ -2035,13 +2186,22 @@ pub async fn output_short_format(
     unstaged: &Changes,
     writer: &mut impl Write,
 ) -> CliResult<()> {
-    output_short_format_with_config(staged, unstaged, &OutputConfig::default(), false, writer).await
+    output_short_format_with_config(
+        staged,
+        unstaged,
+        &[],
+        &OutputConfig::default(),
+        false,
+        writer,
+    )
+    .await
 }
 
 /// Short format output with color controlled by OutputConfig.
 async fn output_short_format_with_config(
     staged: &Changes,
     unstaged: &Changes,
+    unmerged: &[UnmergedEntry],
     output: &OutputConfig,
     null_terminated: bool,
     writer: &mut impl Write,
@@ -2049,7 +2209,7 @@ async fn output_short_format_with_config(
     let use_colors = should_use_colors(output).await;
     let write_err = |e: io::Error| CliError::io(format!("failed to write status output: {e}"));
 
-    let status_list = generate_short_format_status(staged, unstaged);
+    let status_list = generate_short_format_status_with_unmerged(staged, unstaged, unmerged);
 
     for (file, staged_status, unstaged_status) in status_list {
         if use_colors {

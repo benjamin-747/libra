@@ -28,6 +28,7 @@
 - 公开状态：已公开。
 - 用户文档：`docs/commands/ls-files.md` 和 `docs/commands/zh-CN/ls-files.md`。
 - 兼容矩阵：`COMPATIBILITY.md` 顶层命令表登记为 `partial`。
+- P0-01 后，`ls-files -t` 与 `-u` 都会遍历 unmerged stage 1/2/3：`-u` 输出 stage-style 行，`-t` 对每个冲突 stage 输出 `M <path>`，不再因默认 stage 0 视图隐藏冲突路径。回归测试：`compat_conflict_status_diff`。
 - 回归测试：`tests/command_test.rs` 的 `command::ls_files_test::` 覆盖 CLI 行为；`tests/ai_libra_vcs_safety_test.rs` 覆盖 AI/MCP 只读安全；compat 文档测试覆盖 help、用户文档和命令索引同步。
 
 ## 还未实现的功能

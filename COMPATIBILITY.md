@@ -199,7 +199,7 @@ recorded, with its governing number, in
 | cloud | — | config-aware, porcelain-machine | — | common-user-flow |
 | commit | — | common-user-flow, config-aware, plumbing-compatible | — | — |
 | commit-tree | common-user-flow | plumbing-compatible | — | — |
-| diff | — | common-user-flow, porcelain-machine, config-aware, plumbing-compatible | conflict-aware (P0-01) | — |
+| diff | — | common-user-flow, porcelain-machine, conflict-aware, config-aware, plumbing-compatible | — | — |
 | fast-export | common-user-flow | porcelain-machine, plumbing-compatible | — | — |
 | fast-import | — | common-user-flow, plumbing-compatible | — | — |
 | fetch | — | common-user-flow, porcelain-machine, config-aware, plumbing-compatible | — | — |
@@ -209,7 +209,7 @@ recorded, with its governing number, in
 | init | — | common-user-flow, config-aware | — | — |
 | lfs | common-user-flow | — | — | config-aware |
 | log | common-user-flow | porcelain-machine, config-aware, plumbing-compatible | — | — |
-| ls-files | — | common-user-flow, porcelain-machine, plumbing-compatible | conflict-aware (P0-01) | — |
+| ls-files | conflict-aware | common-user-flow, porcelain-machine, plumbing-compatible | — | — |
 | ls-remote | common-user-flow | plumbing-compatible | — | — |
 | media | — | config-aware | — | common-user-flow |
 | merge | — | common-user-flow, conflict-aware, config-aware | — | — |
@@ -225,7 +225,7 @@ recorded, with its governing number, in
 | show | common-user-flow | porcelain-machine, plumbing-compatible | — | — |
 | show-ref | common-user-flow | plumbing-compatible | — | — |
 | shortlog | common-user-flow | porcelain-machine, plumbing-compatible | — | — |
-| status | — | common-user-flow, porcelain-machine, config-aware, plumbing-compatible | conflict-aware (P0-01) | — |
+| status | — | common-user-flow, porcelain-machine, conflict-aware, config-aware, plumbing-compatible | — | — |
 | switch | — | common-user-flow | — | — |
 | tag | common-user-flow | config-aware, plumbing-compatible | — | — |
 | write-tree | common-user-flow | plumbing-compatible | — | — |

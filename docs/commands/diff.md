@@ -21,6 +21,8 @@ libra diff [--algorithm <name>] [--output <file>]
 
 The diff engine supports multiple algorithms (histogram by default, with myers and myersMinimal as alternatives). Output can be directed to a file with `--output`, and several summary formats are available (`--name-only`, `--name-status`, `--numstat`, `--stat`, `--shortstat`, `--summary`). A status-only check is possible with `-s`/`--no-patch` and `--exit-code`, and `-z`/`--null` makes the name/numstat outputs NUL-terminated for safe scripting. `--word-diff[=<mode>]` re-renders the patch at word granularity (matching Git's structure; like all Libra diffs, the exact word grouping can differ from Git on ambiguous changes, and hunk headers keep Libra's unified-diff format).
 
+When the working tree contains unmerged conflict entries, the default working-tree diff renders a conflict-aware `diff --cc <path>` record instead of treating the conflict file as a `/dev/null` addition.
+
 Pathspec arguments filter the diff to only show changes in matching files or directories.
 
 ## Options
@@ -179,6 +181,8 @@ Supported output modes:
 - `--exit-code` still prints the diff but exits `1` when there are differences
 - `-z` / `--null` NUL-terminates `--name-only`/`--name-status`/`--numstat` records (status and path become separate NUL fields under `--name-status`)
 - `--quiet` suppresses stdout and uses exit `1` to signal that differences exist
+
+Unmerged conflict paths are shown with `diff --cc <path>` headers in the default working-tree diff.
 
 `--output <file>` writes human-readable output to a file. In `--quiet` mode the file is still written, but differences still return exit `1`. In `--json` mode this flag is ignored and output always goes to stdout.
 

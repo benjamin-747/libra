@@ -40,7 +40,7 @@ sparse-checkout integration remain deferred.
 | `--stage` | Print stage-style records, including conflict stages when present. |
 | `-s` | Short alias for stage-style output: `<mode> <object> <stage>\t<path>`. |
 | `--abbrev[=<n>]` | Abbreviate the object name to `<n>` hex digits in `-s`/`--stage` output. Bare `--abbrev` uses 7; `--abbrev=<n>` sets the length (the value requires the `=` form, so bare `--abbrev` never consumes a following pathspec). Libra truncates to a fixed length rather than computing the shortest unique prefix. |
-| `-t` | Prefix each path with a status tag: `H` (cached), `R` (removed/deleted), `C` (modified/changed), `?` (other/untracked), `M` (unmerged). |
+| `-t` | Prefix each path with a status tag: `H` (cached), `R` (removed/deleted), `C` (modified/changed), `?` (other/untracked), `M` (unmerged). Unmerged paths are not hidden; each stage 1/2/3 entry is printed as `M <path>`, matching Git's conflict visibility. |
 | `-u`, `--unmerged` | Show only unmerged (conflict) entries — index stages 1/2/3 — in stage-style output. |
 | `--full-name` | Accepted for Git compatibility. Libra always prints repo-root-relative paths (the `git --full-name` form), so this is a no-op. |
 | `--others`, `-o` | Show untracked working-tree files. |
@@ -91,6 +91,17 @@ tracked.txt
 
 ```text
 100644 4f3c2d1a7b8c9d0e1234567890abcdef12345678 0	tracked.txt
+```
+
+Unmerged entries are visible both as stage rows and as tagged rows:
+
+```text
+100644 1111111111111111111111111111111111111111 1	conflict.txt
+100644 2222222222222222222222222222222222222222 2	conflict.txt
+100644 3333333333333333333333333333333333333333 3	conflict.txt
+M conflict.txt
+M conflict.txt
+M conflict.txt
 ```
 
 `-z` keeps the same record shape but terminates each record with NUL instead of

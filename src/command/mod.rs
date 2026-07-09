@@ -111,6 +111,7 @@ mod show_ref_render;
 pub mod sparse_view;
 pub mod symbolic_ref;
 pub mod tag;
+pub(crate) mod unmerged;
 pub mod update_index;
 pub mod update_ref;
 pub mod usage;

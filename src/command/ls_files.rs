@@ -243,7 +243,7 @@ fn run_ls_files(
         // `-u`/`--unmerged` restricts the listing to conflict stages 1/2/3.
         let stages: &[u8] = if _args.unmerged {
             &[1, 2, 3]
-        } else if _args.stage || _args.short {
+        } else if _args.stage || _args.short || _args.tag {
             &[0, 1, 2, 3]
         } else {
             &[0]

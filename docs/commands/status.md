@@ -23,6 +23,10 @@ format, structured JSON for agent consumption, and `-z` NUL-terminated machine o
 also detect renames (`--find-renames`), align output into columns (`--column`), and control
 whether upstream ahead/behind counts are shown (`--ahead-behind` / `--no-ahead-behind`).
 
+During merge, rebase, and cherry-pick conflicts, unmerged index entries are reported as conflicts
+instead of untracked files. Porcelain v1/short output uses Git-style XY codes such as `UU
+conflict.txt`; porcelain v2 emits `u <XY> ...` records with stage modes and object IDs.
+
 ## Options
 
 ### `-s, --short`
@@ -230,6 +234,12 @@ A  src/feature.rs
 M  src/lib.rs
  M README.md
 ?? notes.txt
+```
+
+Unmerged conflict:
+
+```text
+UU conflict.txt
 ```
 
 `--quiet` suppresses all `stdout` output. Combined with `--exit-code`, it acts as a

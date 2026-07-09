@@ -452,15 +452,19 @@ async fn review_read_only_emits_findings_manifest_and_manual_attach() {
     assert_eq!(manifest["starting_sha"], "sha-e8-wire");
     assert_eq!(manifest["target_scope"], "HEAD~1..HEAD");
     assert_eq!(manifest["terminal_state"], "success");
+    // A0-06: findings.md is objectized at finalize; findings_oid is a real
+    // git object id (verified against the content hash after findings.md is
+    // read below).
+    let findings_oid = manifest["findings_oid"]
+        .as_str()
+        .expect("A0-06 populates findings_oid with a real object id");
     assert!(
-        manifest["findings_oid"].is_null(),
-        "AG-22 writes no findings object yet"
+        findings_oid.len() == 40 || findings_oid.len() == 64,
+        "findings_oid must be a git object id: {findings_oid}"
     );
-    assert_eq!(
-        manifest["manual_attach"],
-        serde_json::json!([]),
-        "manual_attach is an EMPTY placeholder in AG-22 (no command surface)"
-    );
+    // No `review attach` was invoked, so manual_attach stays empty (populated
+    // only by the attach command surface — see review_artifacts_objectized).
+    assert_eq!(manifest["manual_attach"], serde_json::json!([]));
     assert!(
         manifest["redaction_report"]["matches"]
             .as_u64()
@@ -474,6 +478,22 @@ async fn review_read_only_emits_findings_manifest_and_manual_attach() {
         .read_findings(&outcome.run_id)
         .expect("read findings")
         .expect("findings exist");
+    // A0-06: the objectized blob at findings_oid must decode to findings.md.
+    let obj_path = repo
+        .join(".libra")
+        .join("objects")
+        .join(&findings_oid[..2])
+        .join(&findings_oid[2..]);
+    let raw = std::fs::read(&obj_path).expect("findings object exists on disk");
+    let mut decoder = flate2::read::ZlibDecoder::new(&raw[..]);
+    let mut decoded = Vec::new();
+    std::io::Read::read_to_end(&mut decoder, &mut decoded).expect("zlib decode findings object");
+    let header_end = decoded.iter().position(|&b| b == 0).expect("object header");
+    assert_eq!(
+        &decoded[header_end + 1..],
+        findings.as_bytes(),
+        "the findings object must match findings.md bytes"
+    );
     assert!(
         findings.contains(&format!(
             "{UNTRUSTED_FINDINGS_OPEN_PREFIX} slug=\"fake-success\">>>"
@@ -1033,4 +1053,130 @@ fn run_level_concurrency_rejects_when_queue_full() {
         serde_json::from_str(stderr[json_start..].trim()).expect("JSON error report parses");
     assert_eq!(report["error_code"], "LBR-AGENT-014");
     assert_eq!(report["exit_code"], 128);
+}
+
+// ---------------------------------------------------------------------------
+// A0-06: manual attach command surface objectizes external files
+// ---------------------------------------------------------------------------
+
+/// `libra review attach <run_id> <file>` redacts the external file, writes it
+/// to the object store, and records a `manual_attach` manifest entry
+/// (`{oid, name, provenance:"manual", size, attached_at}`).
+#[test]
+fn review_artifacts_objectized() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let repo = init_committed_repo(temp.path());
+    let store = store_for(&repo);
+    let run = store
+        .create_run(
+            "attach-run",
+            &["codex".to_string()],
+            "sha-attach",
+            "HEAD~1..HEAD",
+        )
+        .expect("create run");
+
+    // An external file carrying a secret that must be redacted on attach.
+    let attach_file = temp.path().join("external-finding.md");
+    std::fs::write(
+        &attach_file,
+        format!("external finding body\ncredential {FAKE_CREDENTIAL}\n"),
+    )
+    .expect("write attach file");
+
+    let out = run_libra(
+        &[
+            "review",
+            "attach",
+            &run.run_id,
+            attach_file.to_str().unwrap(),
+        ],
+        &repo,
+        &[],
+    );
+    assert!(
+        out.status.success(),
+        "review attach must succeed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let manifest = store
+        .load_manifest(&run.run_id)
+        .expect("load manifest")
+        .expect("manifest exists");
+    assert_eq!(manifest.manual_attach.len(), 1, "one attachment recorded");
+    let entry = &manifest.manual_attach[0];
+    assert_eq!(entry["provenance"], "manual");
+    assert_eq!(entry["name"], "external-finding.md");
+    let oid = entry["oid"].as_str().expect("attachment oid");
+    assert!(oid.len() == 40 || oid.len() == 64, "oid: {oid}");
+
+    // The attachment object is readable, preserves content, and is redacted.
+    let obj_path = repo
+        .join(".libra")
+        .join("objects")
+        .join(&oid[..2])
+        .join(&oid[2..]);
+    let raw = std::fs::read(&obj_path).expect("attachment object on disk");
+    let mut decoder = flate2::read::ZlibDecoder::new(&raw[..]);
+    let mut decoded = Vec::new();
+    std::io::Read::read_to_end(&mut decoder, &mut decoded).expect("zlib decode attachment");
+    let header_end = decoded.iter().position(|&b| b == 0).expect("object header");
+    let text = String::from_utf8_lossy(&decoded[header_end + 1..]).to_string();
+    assert!(
+        text.contains("external finding body"),
+        "attachment content preserved: {text}"
+    );
+    assert!(
+        !text.contains(FAKE_CREDENTIAL),
+        "the credential must be redacted out of the attachment object: {text}"
+    );
+
+    // A second attach appends AND redacts/scrubs an untrusted basename: a
+    // filename can itself carry a secret, a newline, a tab, or ANSI.
+    let leaky_name = format!("leak-{FAKE_CREDENTIAL}-\u{1b}\n\tx.md");
+    let leaky_file = temp.path().join(&leaky_name);
+    std::fs::write(&leaky_file, "second attachment body\n").expect("write leaky-name file");
+    let out = run_libra(
+        &[
+            "review",
+            "attach",
+            &run.run_id,
+            leaky_file.to_str().unwrap(),
+        ],
+        &repo,
+        &[],
+    );
+    assert!(
+        out.status.success(),
+        "second attach: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let manifest = store.load_manifest(&run.run_id).unwrap().unwrap();
+    assert_eq!(manifest.manual_attach.len(), 2, "second attach appends");
+    let name2 = manifest.manual_attach[1]["name"]
+        .as_str()
+        .expect("attachment name");
+    assert!(
+        !name2.contains(FAKE_CREDENTIAL),
+        "the basename must be redacted before persist: {name2}"
+    );
+    assert!(
+        !name2.chars().any(|c| c.is_control()),
+        "the basename must have every control char (incl \\n/\\t/ESC) stripped: {name2:?}"
+    );
+
+    // A failed read of a hostile path must not leak the secret/path either.
+    let missing = temp.path().join(format!("missing-{FAKE_CREDENTIAL}.md"));
+    let out = run_libra(
+        &["review", "attach", &run.run_id, missing.to_str().unwrap()],
+        &repo,
+        &[],
+    );
+    assert!(!out.status.success(), "attaching a missing file must fail");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !stderr.contains(FAKE_CREDENTIAL),
+        "the read-error must not leak the secret from the path: {stderr}"
+    );
 }

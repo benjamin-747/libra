@@ -1722,3 +1722,189 @@ async fn checkpoint_store_missing_nested_tree_emits_lbr_agent_009() {
         "rewind must not panic on a missing subtree: {stderr}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// A0-06 — findings-object repair (review/investigate objectized findings)
+// ---------------------------------------------------------------------------
+
+/// A0-06: a review run's objectized findings blob that goes missing while
+/// `findings.md` remains is detected as `missing_findings_object` and
+/// auto-repaired by `doctor --repair` (content-addressed rewrite from
+/// findings.md), idempotently.
+#[tokio::test]
+async fn findings_object_repair() {
+    use libra::internal::ai::review::{
+        ReviewRunStore, ReviewTerminalState, store::RedactionReportSummary,
+    };
+
+    let repo = DoctorRepo::init();
+    let store = ReviewRunStore::new(repo.repo.join(".libra").join("sessions"));
+    store
+        .create_run(
+            "findings-run",
+            &["codex".to_string()],
+            "sha",
+            "HEAD~1..HEAD",
+        )
+        .expect("create run");
+    store
+        .write_findings("findings-run", "review finding body line\n")
+        .expect("write findings");
+    store
+        .finalize_run(
+            "findings-run",
+            ReviewTerminalState::Success,
+            &[],
+            RedactionReportSummary::default(),
+        )
+        .expect("finalize objectizes findings");
+
+    let manifest = store
+        .load_manifest("findings-run")
+        .expect("load manifest")
+        .expect("manifest");
+    let findings_oid = manifest
+        .findings_oid
+        .expect("A0-06 populated findings_oid at finalize");
+    let obj_path = repo
+        .repo
+        .join(".libra")
+        .join("objects")
+        .join(&findings_oid[..2])
+        .join(&findings_oid[2..]);
+    assert!(
+        obj_path.exists(),
+        "findings object must be written at finalize"
+    );
+
+    // Fabricate the missing-object case (findings.md stays on disk).
+    std::fs::remove_file(&obj_path).expect("delete findings object");
+
+    // Detection-only: reported, auto-repairable, not yet repaired.
+    let report = repo.doctor_json(false);
+    let found = report["findings_store"]["findings"]
+        .as_array()
+        .expect("findings_store.findings array");
+    assert!(
+        found
+            .iter()
+            .any(|f| f["inconsistency_type"] == "missing_findings_object"
+                && f["run_id"] == "findings-run"
+                && f["repaired"] == false
+                && f["manual_required"] == false),
+        "missing findings object must be detected auto-repairable: {report}"
+    );
+    assert!(
+        !obj_path.exists(),
+        "detection-only must not rewrite the object"
+    );
+
+    // Repair: object rewritten from findings.md.
+    let report = repo.doctor_json(true);
+    assert!(
+        report["findings_store"]["repaired"].as_u64().unwrap_or(0) >= 1,
+        "--repair must rewrite the findings object: {report}"
+    );
+    assert!(
+        obj_path.exists(),
+        "the findings object must be restored by --repair"
+    );
+
+    // Idempotent: a second run finds no missing_findings_object.
+    let report = repo.doctor_json(true);
+    assert!(
+        report["findings_store"]["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|f| f["inconsistency_type"] != "missing_findings_object"),
+        "second repair run must be clean: {report}"
+    );
+}
+
+/// A0-06 (codex P1-1): a findings blob already indexed under a different
+/// `agent_*` tag (e.g. `agent_transcript`, because identical bytes were first
+/// seen as a transcript) with the correct size must NOT be flagged as
+/// `missing_findings_object_index` drift — otherwise doctor and the index
+/// writer (which refuses to retag an `agent_*` row) fight a tag-war forever.
+#[tokio::test]
+async fn findings_object_index_tolerates_agent_transcript_tag() {
+    use libra::internal::ai::review::{
+        ReviewRunStore, ReviewTerminalState, store::RedactionReportSummary,
+    };
+
+    let repo = DoctorRepo::init();
+    let store = ReviewRunStore::new(repo.repo.join(".libra").join("sessions"));
+    let findings_body = "review finding body line\n";
+    store
+        .create_run("tag-run", &["codex".to_string()], "sha", "HEAD~1..HEAD")
+        .expect("create run");
+    store
+        .write_findings("tag-run", findings_body)
+        .expect("write findings");
+    store
+        .finalize_run(
+            "tag-run",
+            ReviewTerminalState::Success,
+            &[],
+            RedactionReportSummary::default(),
+        )
+        .expect("finalize objectizes findings");
+    let manifest = store
+        .load_manifest("tag-run")
+        .expect("load manifest")
+        .expect("manifest");
+    let findings_oid = manifest.findings_oid.expect("findings_oid populated");
+
+    // Resolve doctor's repo_id and pre-index the findings blob under the
+    // agent_transcript tag with the correct payload size.
+    let repo_id = {
+        let conn = repo.db().await;
+        let backend = conn.get_database_backend();
+        conn.query_one(Statement::from_string(
+            backend,
+            "SELECT value FROM config_kv WHERE key='libra.repoid'",
+        ))
+        .await
+        .ok()
+        .flatten()
+        .and_then(|r| r.try_get_by::<String, _>("value").ok())
+        .unwrap_or_else(|| "unknown-repo".to_string())
+    };
+    repo.exec_sql(
+        "DELETE FROM object_index WHERE o_id = ?",
+        vec![findings_oid.clone().into()],
+    )
+    .await;
+    repo.exec_sql(
+        "INSERT INTO object_index (o_id, o_type, o_size, repo_id, created_at, is_synced) \
+         VALUES (?, ?, ?, ?, ?, 0)",
+        vec![
+            findings_oid.clone().into(),
+            "agent_transcript".into(),
+            (findings_body.len() as i64).into(),
+            repo_id.into(),
+            0i64.into(),
+        ],
+    )
+    .await;
+
+    // A --repair run must NOT flag the size-matching agent_transcript row.
+    let report = repo.doctor_json(true);
+    let findings = report["findings_store"]["findings"]
+        .as_array()
+        .expect("findings_store.findings array");
+    assert!(
+        findings
+            .iter()
+            .all(|f| f["inconsistency_type"] != "missing_findings_object_index"),
+        "a size-matching agent_* index row must not be flagged as findings drift: {report}"
+    );
+    // The tag is preserved — no tag-war rewrite.
+    let rows = repo.object_index_rows(&[&findings_oid]).await;
+    assert!(
+        rows.iter()
+            .any(|(_, o_type, _, _)| o_type == "agent_transcript"),
+        "the pre-existing agent_transcript tag must be left intact: {rows:?}"
+    );
+}

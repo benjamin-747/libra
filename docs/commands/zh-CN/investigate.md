@@ -12,7 +12,15 @@ libra investigate continue <run_id>
 libra investigate cancel <run_id>
 libra investigate clean [--run <run_id>] [--all]
 libra investigate fix <run_id>
+libra investigate attach <run_id> <file> [--json]
 ```
+
+## 产物（Artifacts）
+
+run 结束时把 `findings.md` 对象化进对象库（manifest 的 `findings_oid` 是内容寻址、带
+`object_index` 标记、可被 doctor 修复的 blob）。`libra investigate attach <run_id>
+<file>` 把外部文件以 `provenance=manual` 记入审计链：字节先脱敏、再对象化，并追加到
+manifest 的 `manual_attach` 列表；永不修改 findings 或 run 状态。
 
 ## 说明
 

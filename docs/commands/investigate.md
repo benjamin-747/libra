@@ -12,7 +12,17 @@ libra investigate continue <run_id>
 libra investigate cancel <run_id>
 libra investigate clean [--run <run_id>] [--all]
 libra investigate fix <run_id>
+libra investigate attach <run_id> <file> [--json]
 ```
+
+## Artifacts
+
+A finished run objectizes its `findings.md` into the object store (the
+manifest's `findings_oid` is a content-addressed, `object_index`-tagged,
+doctor-repairable blob). `libra investigate attach <run_id> <file>` records an
+external file on the run's audit chain with `provenance=manual`: the bytes are
+redacted, objectized, and appended to the manifest's `manual_attach` list. It
+never modifies findings or run state.
 
 ## Description
 

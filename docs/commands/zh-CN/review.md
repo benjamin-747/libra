@@ -10,7 +10,16 @@ libra review list [--json] [--limit <n>] [--cursor <token>]
 libra review show <run_id> [--json]
 libra review cancel <run_id>
 libra review clean [--run <run_id>] [--all]
+libra review attach <run_id> <file> [--json]
 ```
+
+## 产物（Artifacts）
+
+run 结束时会把 `findings.md` 对象化进对象库：manifest 的 `findings_oid` 是内容寻址
+blob，带 `object_index` 标记，因此 cloud sync / retention 可追踪、`libra agent doctor`
+可在其丢失时修复。`libra review attach <run_id> <file>` 把外部文件以
+`provenance=manual` 记入 run 的审计链——字节先脱敏、再对象化，并追加到 manifest 的
+`manual_attach` 列表；attach 永不修改 findings 或 run 状态。
 
 ## 说明
 

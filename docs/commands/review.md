@@ -10,7 +10,18 @@ libra review list [--json] [--limit <n>] [--cursor <token>]
 libra review show <run_id> [--json]
 libra review cancel <run_id>
 libra review clean [--run <run_id>] [--all]
+libra review attach <run_id> <file> [--json]
 ```
+
+## Artifacts
+
+A finished run objectizes its `findings.md` into the object store: the run
+manifest's `findings_oid` is a content-addressed blob, `object_index`-tagged
+so cloud sync and retention track it and `libra agent doctor` can repair it if
+it goes missing. `libra review attach <run_id> <file>` records an external
+file on the run's audit chain with `provenance=manual` — the bytes are
+redacted, objectized the same way, and appended to the manifest's
+`manual_attach` list. Attach never modifies findings or run state.
 
 ## Description
 

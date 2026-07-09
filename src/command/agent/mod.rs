@@ -37,6 +37,22 @@ mod rpc;
 mod session;
 mod status;
 
+/// A0-06: derive a safe display/record name from a `review/investigate attach`
+/// path. Only the basename is kept (never the full path — no directory-tree
+/// leak); the basename is then redacted (a filename can embed a secret) and
+/// every control character is stripped (Unix filenames can carry
+/// newlines/tabs/ANSI). Used for BOTH the manifest `manual_attach` entry AND
+/// any user-facing read error, so a hostile path never reaches output
+/// unsanitized.
+pub(crate) fn sanitize_attachment_name(path: &std::path::Path) -> String {
+    let raw = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "attachment".to_string());
+    let (redacted, _) = crate::internal::ai::review::redact_untrusted(raw.as_bytes());
+    redacted.chars().filter(|c| !c.is_control()).collect()
+}
+
 /// `--help` examples shown in `libra agent --help` output.
 ///
 /// `agent` is the operator surface for the external Agent capture

@@ -27,6 +27,20 @@ pipeline termination: they exit quietly without printing panic/backtrace or
 large-output commands covered by `compat_broken_pipe_output` (`log`, `diff`,
 `grep`, `ls-files`, `show`, `for-each-ref`, `cat-file`, and JSON emit paths).
 
+## Cross-command global config schema behavior
+
+Remote/cloud commands that may rely on global tiered-storage configuration
+(`clone`, `fetch`, `pull`, `push`, and `cloud`) fail closed with
+`LBR-CONFIG-001` when `~/.libra/config.db` (or `LIBRA_CONFIG_GLOBAL_DB`) has a
+schema version newer than this Libra binary supports. This prevents an older
+binary from silently ignoring global storage config and falling back to local
+objects. `--offline` and `LIBRA_READ_POLICY=offline|local` are the explicit
+local-only escape hatch and emit a warning instead. If process environment or
+repo-local `vault.env.LIBRA_STORAGE_*` entries fully supply the values that
+storage initialization would query, the global config DB is unnecessary and the
+command continues with a warning rather than `LBR-CONFIG-001`. The
+compatibility guard is pinned by `compat_global_config_schema_future`.
+
 ## Top-level commands (from `src/cli.rs`)
 
 | Command | Tier | Notes |

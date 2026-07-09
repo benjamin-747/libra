@@ -28,6 +28,20 @@ With `--squash`, pull fetches and computes the merge but stages the merged tree 
 
 With `--autostash`, pull stashes your tracked working-tree changes before integrating (so a dirty tree does not block the merge/rebase) and re-applies them afterwards — even if the merge/rebase fails. Untracked and ignored files are left in place. If re-applying the stash conflicts, the stash is kept and the failure is reported; recover it with `libra stash pop`.
 
+## Global Config Schema Guard
+
+`libra pull` reads the global storage configuration (`~/.libra/config.db`, or
+`LIBRA_CONFIG_GLOBAL_DB`) before trusting remote/tiered object storage settings. If that
+database has a schema version newer than this binary supports, pull fails closed with
+`LBR-CONFIG-001` instead of silently ignoring global storage config and falling back to
+local objects. The diagnostic includes the binary path and version, config DB path,
+schema versions, and the update command:
+`curl --proto '=https' --tlsv1.2 -sSf https://download.libra.tools/install.sh | sh`.
+
+Use `libra --offline pull ...` or `LIBRA_READ_POLICY=offline|local libra pull ...` only when
+you intentionally want local-only object access. Libra will warn once and ignore the
+global storage config for that run.
+
 ## Options
 
 | Flag / Argument | Description | Example |

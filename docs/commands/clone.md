@@ -23,6 +23,20 @@ copied to matching `.libraignore` files so Libra ignore rules work immediately.
 For bare clones, no working tree checkout is performed and the repository directory itself
 becomes the object store. Bare clones do not create `.libraignore`.
 
+## Global Config Schema Guard
+
+`libra clone` reads the global storage configuration (`~/.libra/config.db`, or
+`LIBRA_CONFIG_GLOBAL_DB`) before trusting remote/tiered object storage settings. If that
+database has a schema version newer than this binary supports, clone fails closed with
+`LBR-CONFIG-001` instead of silently ignoring global storage config and falling back to
+local objects. The diagnostic includes the binary path and version, config DB path,
+schema versions, and the update command:
+`curl --proto '=https' --tlsv1.2 -sSf https://download.libra.tools/install.sh | sh`.
+
+Use `libra --offline clone ...` or `LIBRA_READ_POLICY=offline|local libra clone ...` only when
+you intentionally want local-only object access. Libra will warn once and ignore the
+global storage config for that run.
+
 ## Options
 
 ### `<REMOTE_REPO>` (required)

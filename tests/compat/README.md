@@ -68,6 +68,7 @@ top-level `[[test]]` entries in `Cargo.toml`.
 | `write_tree_missing_object_test.rs` | P0-09 (plan-20260708) | `write-tree` / `commit` 在写 tree 或 commit 前必须拒绝 index 中缺失或类型不匹配的对象（`LBR-REPO-002`），且失败不得移动 `HEAD` |
 | `init_shared_mode_test.rs` | P0-10 (plan-20260708) | `init --shared=<numeric>` 必须预拒绝不可遍历目录权限且不留下半仓库；`group`/`all`/可用 numeric 模式必须持久化 `core.sharedRepository`，reinit 同步更新该配置 |
 | `symlink_basic_test.rs` | P0-11 (plan-20260708) | symlink 必须以 index mode `120000` 和 link target blob 入库；pathspec reset 必须保留 symlink index mode；checkout/restore/reset 必须恢复真实 symlink；status/diff/ls-files 必须识别 symlink target 变更且 dangling symlink 不误报删除；非 Unix 平台必须显式诊断而非写普通文件 |
+| `global_config_schema_future_test.rs` | P0-12 (plan-20260708) | 全局 config DB schema 比当前二进制新时，`pull` 等远端/云命令默认 fail-closed 并输出 `LBR-CONFIG-001`；`--offline` / `LIBRA_READ_POLICY=offline|local` 明确降级；完整进程环境或 repo-local `LIBRA_STORAGE_*` 配置不误报；本地命令只 warning；JSON/人类诊断包含升级命令且不泄露 vault secret |
 
 ## Authoring guidelines
 

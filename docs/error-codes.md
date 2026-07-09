@@ -68,7 +68,7 @@ exit codes (128/129), improving compatibility with Git-aware tooling and CI syst
 | Fine-grained behavior | Fine-grained exit | Git-standard contract |
 | --- | --- | --- |
 | Usage / invalid target | `2` | `129` + same `LBR-CLI-*` code |
-| Fatal runtime errors (repo, conflict, network, auth, I/O, internal) | `3`-`8` | `128` + same `LBR-*` code |
+| Fatal runtime errors (repo, config, conflict, network, auth, I/O, internal) | `3`-`8` | `128` + same `LBR-*` code |
 | Warnings emitted | `9` | Unchanged `9` |
 | `cat-file -e` missing object probe | `1` | Still `1` with no stderr output |
 
@@ -88,6 +88,7 @@ structured report is always present.
 | `128` | `LBR-REPO-001` | `repo` | Not inside a Libra repository | running repo commands outside `.libra` |
 | `128` | `LBR-REPO-002` | `repo` | Repository metadata is corrupt or incompatible | missing DB, corrupted metadata |
 | `128` | `LBR-REPO-003` | `repo` | Repository state blocks the operation | no commits yet, detached state mismatch, missing configured remote |
+| `128` | `LBR-CONFIG-001` | `config` | Global config DB schema is newer than this Libra binary supports | `pull`, `push`, `fetch`, `clone`, or `cloud` would otherwise silently ignore global storage config |
 | `128` | `LBR-CONFLICT-001` | `conflict` | Unresolved conflict is present | merge/rebase conflict still unresolved |
 | `128` | `LBR-CONFLICT-002` | `conflict` | Operation blocked to avoid overwriting state | non-fast-forward, destination exists, dirty worktree |
 | `128` | `LBR-POLICY-001` | `conflict` | Branch policy (protect/archive metadata) blocked the ref update | `branch reset` / `update-ref` on a protected or archived branch |
@@ -142,6 +143,12 @@ structured report is always present.
 | `LBR-REPO-001` | Not inside a Libra repository |
 | `LBR-REPO-002` | Repository metadata is corrupt or incompatible |
 | `LBR-REPO-003` | Repository state blocks the operation |
+
+### Config
+
+| Stable code | Meaning |
+| --- | --- |
+| `LBR-CONFIG-001` | Global config database schema is newer than this Libra binary supports; update Libra or explicitly use `--offline` / `LIBRA_READ_POLICY=offline|local` when local-only object access is intended. |
 
 ### Conflict
 

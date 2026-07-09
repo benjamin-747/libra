@@ -144,6 +144,7 @@ pub type ExitCode = CliExitCode;
 pub enum CliErrorCategory {
     Cli,
     Repo,
+    Config,
     Conflict,
     Network,
     Auth,
@@ -161,6 +162,7 @@ impl CliErrorCategory {
         match self {
             Self::Cli => "cli",
             Self::Repo => "repo",
+            Self::Config => "config",
             Self::Conflict => "conflict",
             Self::Network => "network",
             Self::Auth => "auth",
@@ -192,6 +194,8 @@ pub enum StableErrorCode {
     RepoNotFound,
     RepoCorrupt,
     RepoStateInvalid,
+    /// Global config database schema is newer than this Libra binary supports.
+    ConfigSchemaFuture,
     ConflictUnresolved,
     ConflictOperationBlocked,
     /// Branch policy (protect/archive metadata) blocked a ref update — the
@@ -309,6 +313,7 @@ impl StableErrorCode {
             Self::RepoNotFound => "LBR-REPO-001",
             Self::RepoCorrupt => "LBR-REPO-002",
             Self::RepoStateInvalid => "LBR-REPO-003",
+            Self::ConfigSchemaFuture => "LBR-CONFIG-001",
             Self::ConflictUnresolved => "LBR-CONFLICT-001",
             Self::ConflictOperationBlocked => "LBR-CONFLICT-002",
             Self::PolicyRefUpdateBlocked => "LBR-POLICY-001",
@@ -357,6 +362,7 @@ impl StableErrorCode {
             Self::RepoNotFound | Self::RepoCorrupt | Self::RepoStateInvalid => {
                 CliErrorCategory::Repo
             }
+            Self::ConfigSchemaFuture => CliErrorCategory::Config,
             Self::ConflictUnresolved
             | Self::ConflictOperationBlocked
             // Policy refusals ride the Conflict category (no dedicated
@@ -427,6 +433,7 @@ impl StableErrorCode {
         match self.category() {
             CliErrorCategory::Cli => 2,
             CliErrorCategory::Repo => 3,
+            CliErrorCategory::Config => 8,
             CliErrorCategory::Conflict => 4,
             CliErrorCategory::Network => 5,
             CliErrorCategory::Auth => 6,
@@ -447,6 +454,9 @@ impl StableErrorCode {
             Self::RepoCorrupt => "Repository metadata is missing, incompatible, or corrupt.",
             Self::RepoStateInvalid => {
                 "Repository state prevents the requested operation from proceeding."
+            }
+            Self::ConfigSchemaFuture => {
+                "Global config database schema is newer than this Libra binary supports."
             }
             Self::ConflictUnresolved => {
                 "Operation stopped because unresolved conflicts are present."
@@ -1860,7 +1870,7 @@ mod tests {
     /// would invalidate every downstream pin without tripping any
     /// test until end-to-end JSON harness assertions caught it.
     ///
-    /// Enumerate all 22 variants so a new addition trips both this
+    /// Enumerate all 23 non-agent variants so a new addition trips both this
     /// list and the `as_str` impl's exhaustive match.
     #[test]
     fn stable_error_code_as_str_pins_each_variant() {
@@ -1870,6 +1880,10 @@ mod tests {
         assert_eq!(StableErrorCode::RepoNotFound.as_str(), "LBR-REPO-001");
         assert_eq!(StableErrorCode::RepoCorrupt.as_str(), "LBR-REPO-002");
         assert_eq!(StableErrorCode::RepoStateInvalid.as_str(), "LBR-REPO-003");
+        assert_eq!(
+            StableErrorCode::ConfigSchemaFuture.as_str(),
+            "LBR-CONFIG-001",
+        );
         assert_eq!(
             StableErrorCode::ConflictUnresolved.as_str(),
             "LBR-CONFLICT-001",
@@ -1985,6 +1999,10 @@ mod tests {
         assert_eq!(
             StableErrorCode::RepoStateInvalid.category(),
             CliErrorCategory::Repo,
+        );
+        assert_eq!(
+            StableErrorCode::ConfigSchemaFuture.category(),
+            CliErrorCategory::Config,
         );
         assert_eq!(
             StableErrorCode::ConflictUnresolved.category(),

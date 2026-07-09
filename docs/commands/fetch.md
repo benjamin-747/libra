@@ -23,6 +23,20 @@ the fetch to a single branch.
 Fetch supports SSH, HTTPS, local file, and `git://` transports. Vault-backed SSH keys
 are loaded automatically when configured via `vault.ssh.<remote>.privkey`.
 
+## Global Config Schema Guard
+
+`libra fetch` reads the global storage configuration (`~/.libra/config.db`, or
+`LIBRA_CONFIG_GLOBAL_DB`) before trusting remote/tiered object storage settings. If that
+database has a schema version newer than this binary supports, fetch fails closed with
+`LBR-CONFIG-001` instead of silently ignoring global storage config and falling back to
+local objects. The diagnostic includes the binary path and version, config DB path,
+schema versions, and the update command:
+`curl --proto '=https' --tlsv1.2 -sSf https://download.libra.tools/install.sh | sh`.
+
+Use `libra --offline fetch ...` or `LIBRA_READ_POLICY=offline|local libra fetch ...` only when
+you intentionally want local-only object access. Libra will warn once and ignore the
+global storage config for that run.
+
 ## Options
 
 | Flag / Argument | Description | Example |

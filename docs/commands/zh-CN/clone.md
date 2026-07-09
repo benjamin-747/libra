@@ -16,6 +16,13 @@ libra clone [OPTIONS] <REMOTE_REPO> [LOCAL_PATH]
 
 对于裸克隆，不会执行工作树检出，仓库目录本身会直接成为对象存储。裸克隆不会创建 `.libraignore`。
 
+## 全局配置 Schema 保护
+
+`libra clone` 在信任远端 / tiered 对象存储设置前，会读取全局存储配置（`~/.libra/config.db`，或 `LIBRA_CONFIG_GLOBAL_DB` 指定的路径）。如果该数据库的 schema 版本比当前二进制支持的版本更新，clone 会以 `LBR-CONFIG-001` fail-closed，而不是静默忽略全局存储配置并回退到本地对象。诊断会包含二进制路径和版本、配置 DB 路径、schema 版本，以及升级命令：
+`curl --proto '=https' --tlsv1.2 -sSf https://download.libra.tools/install.sh | sh`。
+
+只有在明确希望本地对象访问时，才使用 `libra --offline clone ...` 或 `LIBRA_READ_POLICY=offline|local libra clone ...`。Libra 会告警一次，并在本次运行中忽略全局存储配置。
+
 ## 选项
 
 ### `<REMOTE_REPO>`（必需）

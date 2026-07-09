@@ -23,6 +23,11 @@ The diff engine supports multiple algorithms (histogram by default, with myers a
 
 When the working tree contains unmerged conflict entries, the default working-tree diff renders a conflict-aware `diff --cc <path>` record instead of treating the conflict file as a `/dev/null` addition.
 
+Tracked symlink changes are diffed by the symlink target bytes. The worktree
+reader uses `symlink_metadata`/`read_link`, so dangling symlinks are still
+diffed as symlinks and are not treated as deleted merely because their targets
+do not exist.
+
 Pathspec arguments filter the diff to only show changes in matching files or directories.
 
 When stdout is piped and the downstream command exits early, stdout `BrokenPipe` is treated as

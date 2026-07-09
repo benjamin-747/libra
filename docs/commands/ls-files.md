@@ -24,6 +24,10 @@ NUL-delimited text output via `-z`, status tags via `-t`, and unmerged-only
 listing via `-u` / `--unmerged`. `--full-name` is accepted as a no-op (Libra
 always prints repo-root-relative paths).
 
+Tracked symlinks are inspected as symlinks for `--deleted` and `--modified`:
+a dangling symlink still exists and is not listed as deleted, while a changed
+link target is listed as modified.
+
 Pathspecs are resolved from the caller's current working directory, not forced
 to the repository root. Exact-file and directory-prefix filtering are both
 supported; pathspecs that resolve outside the repository are rejected. The

@@ -24,6 +24,8 @@ libra restore --ignore-unmerged [--source <tree-ish>] <pathspec>...
 
 从引用 LFS 指针的提交恢复时，LFS 管理的文件会自动从 LFS 服务器下载。
 
+从来源 tree、索引或冲突 stage 恢复符号链接时，Libra 会在支持 symlink 的平台上创建真正的 symlink，并把链接 blob 字节作为目标路径。恢复过程不会跟随或打开目标路径，因此指向仓库外部的 symlink 也只会被恢复为链接本身。`--merge` 重建冲突标记时也会先替换工作树中的既有 symlink，再写入普通冲突标记文件。不支持 symlink 的平台会返回明确诊断，而不是把链接目标写成普通文件内容。
+
 ## 选项
 
 | 选项 | 短选项 | 长选项 | 说明 |
@@ -114,6 +116,9 @@ libra restore --staged file.txt
 
 # 从特定提交恢复
 libra restore --source HEAD~1 src/main.rs
+
+# 从 HEAD 恢复已跟踪符号链接
+libra restore --source HEAD link-to-target
 
 # 同时恢复工作树和索引
 libra restore -S -W file.txt

@@ -1,6 +1,6 @@
 [package]
 name = "libra"
-version = "0.18.44"
+version = "0.18.45"
 edition = "2024"
 license = "MIT"
 description = "AI agent-native version control system with Git on-disk compatibility, SQLite-backed metadata, and tiered cloud storage"
@@ -344,6 +344,10 @@ path = "tests/compat/write_tree_missing_object_test.rs"
 [[test]]
 name = "compat_init_shared_mode"
 path = "tests/compat/init_shared_mode_test.rs"
+
+[[test]]
+name = "compat_symlink_basic"
+path = "tests/compat/symlink_basic_test.rs"
 
 # OTLP integration tests need the feature (excluded from `cargo test --all`
 # under default features via required-features).

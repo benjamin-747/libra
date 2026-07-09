@@ -23,6 +23,8 @@ Diff 引擎支持多种算法（默认 histogram，myers 和 myersMinimal 作为
 
 当工作树存在未合并冲突条目时，默认工作区 diff 会输出冲突感知的 `diff --cc <path>` 记录，而不是把冲突文件误报为从 `/dev/null` 新增。
 
+工作树中的已跟踪符号链接按链接目标 blob 字节参与 diff。修改 symlink 目标会显示旧目标和新目标的内容差异；dangling symlink 不会因为目标不存在而被当作删除路径。
+
 Pathspec 参数会将 diff 过滤为只显示匹配文件或目录中的更改。
 
 当 stdout 被管道连接且下游命令提前退出时，stdout `BrokenPipe` 会被视为正常管道终止；不会打印 panic/backtrace 或 `Broken pipe` 诊断。

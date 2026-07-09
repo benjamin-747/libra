@@ -23,6 +23,11 @@ automatically staged as pointer files. The `-A` flag stages all changes (adds, m
 removes) across the entire working tree, while `-u` updates only tracked files without
 adding new ones.
 
+Symbolic links are staged as Git-compatible symlink blobs: the index mode is
+`120000` and the blob content is the link target bytes. The link is never
+followed while staging, so a symlink pointing outside the worktree is recorded
+as the link itself rather than as the target file's contents.
+
 ## Options
 
 ### `[PATHSPEC...]`

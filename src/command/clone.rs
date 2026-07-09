@@ -1107,6 +1107,11 @@ fn map_checkout_error(source: RestoreError) -> CliError {
                 .with_stable_code(StableErrorCode::NetworkUnavailable)
                 .with_hint("checkout required downloading LFS content, but the transfer failed")
         }
+        RestoreError::SymlinkUnsupported(path) => CliError::fatal(format!(
+            "working tree checkout requires a symlink at '{path}', but this platform does not support it"
+        ))
+        .with_stable_code(StableErrorCode::Unsupported)
+        .with_hint("retry on a platform with symlink support or disable checkout and inspect the tree"),
         // `clone` never resolves user revisions, so the locked-source guard
         // in `restore::run_restore` is unreachable here. Surface a fatal
         // diagnostic rather than panicking on the unreachable branch — keeps

@@ -35,11 +35,13 @@ use git_internal::{
 use serde::Serialize;
 
 use crate::{
-    command::status::{self, Changes},
+    command::{
+        read_worktree_blob_bytes,
+        status::{self, Changes},
+    },
     internal::ai::automation::{VCS_EVENT_POST_ADD, dispatch_current_repo_vcs_event_to_history},
     utils::{
         error::{CliError, CliResult, StableErrorCode},
-        lfs,
         object_ext::BlobExt,
         output::{self, OutputConfig},
         path, util,
@@ -656,11 +658,11 @@ pub async fn run_add(args: &AddArgs) -> CliResult<AddOutput> {
             let path_str = file.display().to_string();
             if args.renormalize {
                 // Mirror `renormalize_entry` exactly (via `symlink_metadata`, which
-                // does not follow links): gone -> staged deletion, directory or
-                // symlink -> skipped, regular file -> force-rewritten (modified).
+                // does not follow links): gone -> staged deletion, directory ->
+                // skipped, regular file or symlink -> force-rewritten (modified).
                 match std::fs::symlink_metadata(workdir.join(file)) {
                     Err(_) => add_output.removed.push(path_str),
-                    Ok(meta) if meta.is_dir() || meta.file_type().is_symlink() => {}
+                    Ok(meta) if meta.is_dir() => {}
                     Ok(_) => add_output.modified.push(path_str),
                 }
                 continue;
@@ -855,8 +857,12 @@ fn apply_chmod(
             continue;
         }
         let file_abs = pathspec_ctx.workdir.join(file);
-        if !file_abs.is_file() {
-            // The tracked path is gone (or is a directory): nothing to chmod.
+        let Ok(metadata) = std::fs::symlink_metadata(&file_abs) else {
+            // The tracked path is gone: nothing to chmod.
+            continue;
+        };
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            // Only real regular files carry an executable bit.
             continue;
         }
         if !dry_run {
@@ -908,13 +914,10 @@ fn renormalize_entry(
     if meta.is_dir() {
         return Ok(StagedAction::Unchanged);
     }
-    if meta.file_type().is_symlink() {
-        // A symlink's content is its link target — there is nothing to
-        // renormalize, and re-reading it through `gen_blob_from_file` (which
-        // follows the link) would corrupt the entry. Leave it untouched.
-        return Ok(StagedAction::Unchanged);
-    }
-    let blob = gen_blob_from_file(&file_abs);
+    let blob = gen_blob_from_file(&file_abs).map_err(|source| AddError::CreateIndexEntry {
+        path: file.to_path_buf(),
+        source,
+    })?;
     blob.save();
     index.update(
         IndexEntry::new_from_file(file, blob.id, workdir).map_err(|source| {
@@ -1208,7 +1211,7 @@ fn validate_pathspecs(
         // `--ignore-missing` (dry-run only) skips a pathspec that does not exist
         // on disk instead of failing; a path that EXISTS but still matches
         // nothing is a real error even under `--ignore-missing` (matching Git).
-        if ignore_missing && !requested_abs.exists() {
+        if ignore_missing && requested_abs.symlink_metadata().is_err() {
             missing.push(raw.clone());
             continue;
         }
@@ -1393,15 +1396,23 @@ async fn stage_a_file(
         path: file.to_path_buf(),
     })?;
 
-    // Skip directories - they cannot be staged as blobs
-    if file_abs.is_dir() {
+    // Skip real directories - symlinks to directories are staged as link blobs.
+    if file_abs
+        .symlink_metadata()
+        .map(|metadata| metadata.is_dir() && !metadata.file_type().is_symlink())
+        .unwrap_or(false)
+    {
         return Ok(StagedAction::Unchanged);
     }
 
     let file_status = check_file_status(file, index, workdir)?;
     match file_status {
         FileStatus::New => {
-            let blob = gen_blob_from_file(&file_abs);
+            let blob =
+                gen_blob_from_file(&file_abs).map_err(|source| AddError::CreateIndexEntry {
+                    path: file.to_path_buf(),
+                    source,
+                })?;
             blob.save();
             index.add(
                 IndexEntry::new_from_file(file, blob.id, workdir).map_err(|source| {
@@ -1415,7 +1426,11 @@ async fn stage_a_file(
         }
         FileStatus::Modified => {
             if index.is_modified(file_str, 0, workdir) {
-                let blob = gen_blob_from_file(&file_abs);
+                let blob =
+                    gen_blob_from_file(&file_abs).map_err(|source| AddError::CreateIndexEntry {
+                        path: file.to_path_buf(),
+                        source,
+                    })?;
                 if !index.verify_hash(file_str, 0, &blob.id) {
                     blob.save();
                     index.update(IndexEntry::new_from_file(file, blob.id, workdir).map_err(
@@ -1470,7 +1485,7 @@ fn check_file_status(file: &Path, index: &Index, workdir: &Path) -> Result<FileS
         path: file.to_path_buf(),
     })?;
     let file_abs = workdir.join(file);
-    if !file_abs.exists() {
+    if file_abs.symlink_metadata().is_err() {
         if index.tracked(file_str, 0) {
             Ok(FileStatus::Deleted)
         } else {
@@ -1488,15 +1503,10 @@ fn check_file_status(file: &Path, index: &Index, workdir: &Path) -> Result<FileS
 /// Generate a `Blob` from a file.
 ///
 /// Functional scope:
-/// - When the file matches a `.libra_attributes` LFS filter, returns a pointer
-///   blob via [`Blob::from_lfs_file`]; otherwise reads the file content
-///   verbatim into a regular blob.
-fn gen_blob_from_file(path: impl AsRef<Path>) -> Blob {
-    if lfs::is_lfs_tracked(&path) {
-        Blob::from_lfs_file(&path)
-    } else {
-        Blob::from_file(&path)
-    }
+/// - Reads the exact bytes Git would store for a worktree blob: regular file
+///   content, generated LFS pointer content, or symlink target bytes.
+fn gen_blob_from_file(path: impl AsRef<Path>) -> io::Result<Blob> {
+    read_worktree_blob_bytes(path).map(Blob::from_content_bytes)
 }
 
 #[cfg(test)]

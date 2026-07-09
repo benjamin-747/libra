@@ -67,6 +67,7 @@ top-level `[[test]]` entries in `Cargo.toml`.
 | `sequencer_message_author_test.rs` | P0-08 (plan-20260708) | `cherry-pick` 必须保留原提交 author metadata，`revert` 必须使用当前身份创建提交，且二者生成消息不得从签名块派生错误 subject |
 | `write_tree_missing_object_test.rs` | P0-09 (plan-20260708) | `write-tree` / `commit` 在写 tree 或 commit 前必须拒绝 index 中缺失或类型不匹配的对象（`LBR-REPO-002`），且失败不得移动 `HEAD` |
 | `init_shared_mode_test.rs` | P0-10 (plan-20260708) | `init --shared=<numeric>` 必须预拒绝不可遍历目录权限且不留下半仓库；`group`/`all`/可用 numeric 模式必须持久化 `core.sharedRepository`，reinit 同步更新该配置 |
+| `symlink_basic_test.rs` | P0-11 (plan-20260708) | symlink 必须以 index mode `120000` 和 link target blob 入库；pathspec reset 必须保留 symlink index mode；checkout/restore/reset 必须恢复真实 symlink；status/diff/ls-files 必须识别 symlink target 变更且 dangling symlink 不误报删除；非 Unix 平台必须显式诊断而非写普通文件 |
 
 ## Authoring guidelines
 

@@ -15,7 +15,7 @@ use git_internal::{
 use serde::Serialize;
 
 use crate::{
-    command::load_object,
+    command::{load_object, read_worktree_blob_bytes},
     utils::{
         error::{CliError, CliResult, StableErrorCode},
         ignore,
@@ -257,7 +257,7 @@ fn run_ls_files(
                 if _args.ignored && !is_excluded(&worktree_path) {
                     continue;
                 }
-                let exists = worktree_path.exists();
+                let exists = fs::symlink_metadata(&worktree_path).is_ok();
                 let is_deleted = !exists;
                 let is_modified =
                     exists && entry_modified(&worktree_path, &entry.name, &entry.hash.to_string())?;
@@ -463,7 +463,7 @@ fn entry_matches_pathspec(entry: &FileEntry, pathspec: &ResolvedPathspec, workdi
 }
 
 fn entry_modified(worktree_path: &Path, display_path: &str, indexed_hash: &str) -> CliResult<bool> {
-    let data = match fs::read(worktree_path) {
+    let data = match read_worktree_blob_bytes(worktree_path) {
         Ok(data) => data,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(source) => {

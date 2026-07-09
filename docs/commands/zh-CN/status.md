@@ -18,6 +18,8 @@ libra status [OPTIONS]
 
 在 merge、rebase、cherry-pick 冲突期间，未合并的 index stage 条目会按冲突输出，而不会被误报为未跟踪文件。porcelain v1/短格式使用 Git 风格 XY 码（例如 `UU conflict.txt`）；porcelain v2 输出带 stage mode 与 object id 的 `u <XY> ...` 记录。
 
+已跟踪符号链接按链接本身比较，而不是跟随目标文件。链接目标字节或文件类型变化会显示为修改；dangling symlink 仍被视为存在的工作树路径，不会误报为删除。
+
 ## 选项
 
 ### `-s, --short`

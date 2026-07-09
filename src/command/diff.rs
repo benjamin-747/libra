@@ -29,7 +29,7 @@ use tempfile::NamedTempFile;
 
 use crate::{
     command::{
-        get_target_commit, load_object,
+        get_target_commit, load_object, read_worktree_blob_bytes,
         unmerged::{self, UnmergedEntry},
     },
     internal::{config::ConfigKv, head::Head},
@@ -1683,7 +1683,7 @@ fn get_files_blobs(
                 return Ok((p.to_owned(), hash));
             }
             let path = util::workdir_to_absolute(p);
-            let data = std::fs::read(&path).map_err(|e| DiffError::FileRead {
+            let data = read_worktree_blob_bytes(&path).map_err(|e| DiffError::FileRead {
                 path: path.display().to_string(),
                 detail: e.to_string(),
             })?;
@@ -1848,7 +1848,7 @@ fn get_worktree_diff_files(index: &Index) -> Result<Vec<PathBuf>, DiffError> {
 
     for file in index.tracked_files() {
         let absolute = util::workdir_to_absolute(&file);
-        if absolute.is_file() && seen.insert(file.clone()) {
+        if std::fs::symlink_metadata(&absolute).is_ok() && seen.insert(file.clone()) {
             files.push(file);
         }
     }
@@ -2001,7 +2001,7 @@ fn load_repo_blob_content(hash: &ObjectHash) -> Result<Vec<u8>, DiffError> {
 
 fn read_worktree_blob_content(path_buf: &PathBuf) -> Result<Vec<u8>, DiffError> {
     let absolute = util::workdir_to_absolute(path_buf);
-    std::fs::read(&absolute).map_err(|e| DiffError::FileRead {
+    read_worktree_blob_bytes(&absolute).map_err(|e| DiffError::FileRead {
         path: absolute.display().to_string(),
         detail: e.to_string(),
     })
@@ -2123,7 +2123,7 @@ fn stage_text(
 
 fn read_optional_worktree_text(path: &PathBuf) -> Result<String, DiffError> {
     let absolute = util::workdir_to_absolute(path);
-    match std::fs::read(&absolute) {
+    match read_worktree_blob_bytes(&absolute) {
         Ok(data) => Ok(String::from_utf8_lossy(&data).into_owned()),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(String::new()),
         Err(error) => Err(DiffError::FileRead {

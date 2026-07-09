@@ -27,6 +27,12 @@ During merge, rebase, and cherry-pick conflicts, unmerged index entries are repo
 instead of untracked files. Porcelain v1/short output uses Git-style XY codes such as `UU
 conflict.txt`; porcelain v2 emits `u <XY> ...` records with stage modes and object IDs.
 
+Tracked symlinks participate in the same HEAD/index/worktree comparison as
+regular files. `status` treats the symlink itself as the worktree object,
+compares the stored link target bytes, and reports target changes as
+modifications instead of following the link or treating dangling symlinks as
+deleted.
+
 ## Options
 
 ### `-s, --short`

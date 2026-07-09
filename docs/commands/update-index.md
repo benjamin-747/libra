@@ -29,7 +29,9 @@ saves the index.
   `LBR-REPO-002` if a blob/tree entry still points at a missing or wrong-type
   object.
 - `--add <path>...` (re)stages files from the working tree, allowing paths not
-  yet tracked. Without `--add`, a positional path must already be tracked.
+  yet tracked. Working-tree symlinks are staged as mode `120000` blobs whose
+  content is the link target bytes; the target is not followed. Without
+  `--add`, a positional path must already be tracked.
 - `--remove <path>...` drops the named paths from the index.
 
 ## Options
@@ -63,6 +65,9 @@ libra write-tree   # fails with LBR-REPO-002
 # Stage and unstage working-tree files
 libra update-index --add src/new.rs
 libra update-index --remove src/old.rs
+
+# Stage a working-tree symlink as a 120000 link-target blob
+libra update-index --add link-to-target
 ```
 
 ## Comparison with Git

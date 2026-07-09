@@ -2828,7 +2828,7 @@ fn changes_to_be_staged_split_force_with_index(
             .to_str()
             .ok_or_else(|| StatusError::InvalidPathEncoding { path: file.clone() })?;
         let file_abs = workdir.join(file);
-        if !file_abs.exists() {
+        if file_abs.symlink_metadata().is_err() {
             visible.deleted.push(file.clone());
         } else if index.is_modified(file_str, 0, workdir) {
             let file_hash =
@@ -2882,7 +2882,7 @@ fn changes_to_be_staged_split_with_index(
             .to_str()
             .ok_or_else(|| StatusError::InvalidPathEncoding { path: file.clone() })?;
         let file_abs = workdir.join(file);
-        if !file_abs.exists() {
+        if file_abs.symlink_metadata().is_err() {
             visible.deleted.push(file.clone());
         } else if index.is_modified(file_str, 0, workdir) {
             let file_hash =
@@ -2975,7 +2975,7 @@ fn list_workdir_files_split_safe(workdir: &PathBuf) -> io::Result<(Vec<PathBuf>,
                 } else {
                     pending_dirs.push(path);
                 }
-            } else if file_type.is_file() {
+            } else if file_type.is_file() || file_type.is_symlink() {
                 if util::check_gitignore(workdir, &path) {
                     ignored.push(relative);
                 } else {
@@ -3018,7 +3018,7 @@ fn list_workdir_files_split_force(workdir: &PathBuf) -> io::Result<(Vec<PathBuf>
                 // — so `add --force` sees concrete blobs, not a path that
                 // would panic when `Blob::from_file` tries to read it.
                 pending_dirs.push(path.clone());
-            } else if file_type.is_file() {
+            } else if file_type.is_file() || file_type.is_symlink() {
                 if util::check_gitignore(workdir, &path) {
                     ignored.push(relative);
                 } else {

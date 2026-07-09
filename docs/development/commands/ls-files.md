@@ -23,6 +23,7 @@
 - 2026-06-13 `8d4fb969`：引入基础索引列举实现轮廓。
 - 2026-06-20 PR #415：公开 `ls-files` 顶层命令，补齐 pathspec、`--error-unmatch`、`-z`、AI/MCP 只读安全覆盖、用户文档和兼容矩阵。
 - 2026-07-09（plan-20260708 P0-06）：直接 stdout 写入改走全局 `stdout_write_error` 映射，下游提前关闭管道时静默正常终止，不打印 panic/backtrace/`Broken pipe` 诊断。回归覆盖：`compat_broken_pipe_output`。
+- 2026-07-09（plan-20260708 P0-11）：`--deleted` / `--modified` 的工作树存在性判断改用 `symlink_metadata`，dangling tracked symlink 不再被误列为 deleted；symlink target 变化继续按 blob hash 差异列为 modified。回归覆盖：`compat_symlink_basic`。
 
 ## 当前状态
 
@@ -30,6 +31,7 @@
 - 用户文档：`docs/commands/ls-files.md` 和 `docs/commands/zh-CN/ls-files.md`。
 - 兼容矩阵：`COMPATIBILITY.md` 顶层命令表登记为 `partial`。
 - P0-01 后，`ls-files -t` 与 `-u` 都会遍历 unmerged stage 1/2/3：`-u` 输出 stage-style 行，`-t` 对每个冲突 stage 输出 `M <path>`，不再因默认 stage 0 视图隐藏冲突路径。回归测试：`compat_conflict_status_diff`。
+- P0-11 后，tracked symlink 由 `symlink_metadata` 判定存在，`ls-files --deleted` 不会把 dangling symlink 当作缺失；`--modified` 通过 symlink target bytes 对比 index blob。
 - 回归测试：`tests/command_test.rs` 的 `command::ls_files_test::` 覆盖 CLI 行为；`tests/ai_libra_vcs_safety_test.rs` 覆盖 AI/MCP 只读安全；compat 文档测试覆盖 help、用户文档和命令索引同步。
 
 ## 还未实现的功能

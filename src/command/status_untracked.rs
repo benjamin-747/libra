@@ -107,7 +107,7 @@ fn collect_tracked_worktree_changes(
             .to_str()
             .ok_or_else(|| StatusError::InvalidPathEncoding { path: file.clone() })?;
         let file_abs = workdir.join(file);
-        if !file_abs.exists() {
+        if file_abs.symlink_metadata().is_err() {
             changes.deleted.push(file.clone());
         } else if index.is_modified(file_str, 0, workdir) {
             let file_hash =
@@ -179,7 +179,7 @@ fn scan_workdir(
                     continue;
                 }
                 pending_dirs.push(path);
-            } else if file_type.is_file() {
+            } else if file_type.is_file() || file_type.is_symlink() {
                 scan_file(
                     &mut scan,
                     workdir,
@@ -247,7 +247,7 @@ fn untracked_dir_has_visible_file(workdir: &Path, dir: &Path) -> bool {
             if util::check_gitignore(&workdir.to_path_buf(), &path) {
                 continue;
             }
-            if file_type.is_file() {
+            if file_type.is_file() || file_type.is_symlink() {
                 return true;
             }
             if file_type.is_dir() {

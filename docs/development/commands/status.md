@@ -41,6 +41,7 @@ flowchart TD
 - 2026-06-06 `7d985dec`（`feat(status): add -z NUL-terminated porcelain output (implies v1)`）：当前 HEAD 已保留 `-z` / `--null` NUL-terminated 输出，`StatusArgs::null_terminated` 贯穿 short/porcelain 渲染路径；该能力不再作为缺口处理。
 - 2025-12-10 `22ecce78`（`feat(status): support --porcelain=v2 and --untracked-files modes (#78) (#82)`）：功能演进：support --porcelain=v2 and --untracked-files modes (#78) (#82)；该节点扩展了当前命令可用的参数或行为。
 - 2026-05-17 `f5351224`（`docs(status): correct porcelain-v2 rationale + document stash_entries opt-in`）：文档与兼容口径：correct porcelain-v2 rationale + document stash_entries opt-in；当前文档按该节点之后的实现状态校准。
+- 2026-07-09（plan-20260708 P0-11）：源码核对确认多处工作树扫描使用 `exists()`/`is_file()`，会忽略 dangling symlink 或把 symlink 目标状态当作路径状态。当前 main scanner、split scanner 与 untracked walker 改用 `symlink_metadata` / `file_type.is_symlink()`，tracked symlink target change 会作为修改报告。回归守卫：`compat_symlink_basic`。
 - 历史结论：当前文档应以这些提交之后的代码、测试和兼容矩阵为准；更早的迁移式文档只保留为背景，不再作为事实来源。
 
 ## 当前状态
@@ -50,6 +51,7 @@ flowchart TD
 - Synopsis：`libra status [OPTIONS]`。
 - 公开参数/子命令包括：`-s, --short`、`--long`（显式选择默认长格式，no-op，与 `--short`/`--porcelain` 互斥）、`--porcelain [VERSION]`、`-b, --branch`、`--ahead-behind`、`--no-ahead-behind`、`--show-stash`、`--ignored`、`-u`/`--untracked-files [<MODE>]`（短/长形式；不带值即 `all`，短形式接受附加值 `-uno`/`-uall`/`-unormal`，经 `num_args=0..=1` + `default_missing_value=all`；默认 `normal`）、`--column`、`--no-column`、`-z`、`--find-renames [PERCENT]`、`--renames`、`--no-renames`、`--exit-code`。`--renames`/`--no-renames`（`overrides_with` 互斥）切换重命名检测：`--no-renames` 关闭（优先于 `--renames`/`--find-renames`），`--renames` 以默认（或 `--find-renames`）阈值开启。`--column`/`--no-column`（`overrides_with` 互斥）切换列对齐：`--no-column`（= `--column=never`）撤销先前的 `--column`（last-wins，读 `column` 布尔字段，`no_column` 不直接读取），status 默认非列式故单独为 no-op。
 - P0-01 后，`collect_status_data` 通过 `src/command/unmerged.rs` 从 index stage 1/2/3 收集 unmerged entries，并从 untracked 集合剔除同一路径。short/porcelain v1 输出七类 XY；porcelain v2 输出 `u <XY> N... <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>`；默认长格式新增 `Unmerged paths:` 段，`--exit-code` 将 unmerged 视为 dirty。回归测试：`compat_conflict_status_diff`。
+- P0-11 后，tracked symlink 按链接本身比较：link target bytes 或 mode 改变会进入 unstaged/staged 变更集合；dangling symlink 通过 `symlink_metadata` 视为存在路径，不会误报为 deleted。
 
 
 ## 还未实现的功能

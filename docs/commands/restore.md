@@ -24,6 +24,15 @@ When a source commit contains files that do not exist in the current worktree, t
 
 LFS-managed files are automatically downloaded from the LFS server when restoring from a commit that references LFS pointers.
 
+Tracked symlinks are restored as symlinks on Unix for source tree, index, and
+conflict-stage restores. The stored blob bytes are used directly as the link
+target and are not interpreted as a path to open during restore, which avoids
+writing through a link that points outside the worktree. `--merge` conflict
+marker rebuilds also replace an existing worktree symlink before writing the
+regular marker file. Platforms that cannot create symlinks return an explicit
+unsupported diagnostic instead of materializing a regular file containing the
+target text.
+
 ## Options
 
 | Option | Short | Long | Description |
@@ -126,6 +135,9 @@ libra restore -S -W file.txt
 
 # Restore everything from HEAD
 libra restore --source HEAD .
+
+# Restore a tracked symlink as a symlink
+libra restore --source HEAD link-to-target
 
 # Take our / their side of a merge conflict
 libra restore --ours file.txt

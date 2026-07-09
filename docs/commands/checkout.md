@@ -23,6 +23,11 @@ When checking out a branch name that does not exist locally but matches a remote
 
 Path restoration is only enabled by an explicit `--` separator. Without `--`, `libra checkout <name>` is always branch mode, even when a file has the same name.
 
+When path restoration materializes a tracked symlink, Libra writes a real
+symlink on Unix using the stored link target bytes. Platforms without symlink
+support return an explicit unsupported-symlink diagnostic instead of silently
+writing a regular file that contains the target path.
+
 ## Options
 
 | Flag | Long | Value | Description |
@@ -67,6 +72,9 @@ libra checkout -- src/main.rs
 
 # Restore a path from HEAD to both index and worktree
 libra checkout HEAD -- src/main.rs
+
+# Restore a tracked symlink as a symlink
+libra checkout HEAD -- link-to-target
 ```
 
 ## Common Commands

@@ -309,15 +309,16 @@ pub async fn execute_safe(args: GrepArgs, output: &OutputConfig) -> CliResult<()
         util::require_repo().map_err(|_| CliError::repo_not_found())?;
     }
 
-    let result = run_grep(&args).await?;
+    let result = run_grep(&args)
+        .await
+        .map_err(|error| error.with_exit_code(2))?;
     let has_selected_results = has_selected_results(&args, &result);
     render_grep_output(&args, &result, output)?;
 
     if has_selected_results {
         Ok(())
     } else {
-        Err(CliError::failure("no matches found")
-            .with_stable_code(StableErrorCode::CliInvalidTarget))
+        Err(CliError::silent_exit(1))
     }
 }
 

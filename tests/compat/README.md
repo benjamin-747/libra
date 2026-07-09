@@ -71,6 +71,7 @@ top-level `[[test]]` entries in `Cargo.toml`.
 | `global_config_schema_future_test.rs` | P0-12 (plan-20260708) | 全局 config DB schema 比当前二进制新时，`pull` 等远端/云命令默认 fail-closed 并输出 `LBR-CONFIG-001`；`--offline` / `LIBRA_READ_POLICY=offline|local` 明确降级；完整进程环境或 repo-local `LIBRA_STORAGE_*` 配置不误报；本地命令只 warning；JSON/人类诊断包含升级命令且不泄露 vault secret |
 | `pathspec_magic_test.rs` | P1-01 (plan-20260708) | 共享 pathspec parser/matcher 必须支持 `top` / `exclude` / `icase` / `literal` / `glob` magic、子目录相对解析，并被 `ls-files` / `grep` / `diff` / `status` 只读消费者复用 |
 | `ignore_attributes_sources_test.rs` | P1-02 (plan-20260708) | Git 标准 ignore/attributes 来源（`.gitignore`、`.git/info/*`、`core.*File`）与 Libra 扩展来源并存；覆盖 `status` / `add` / `clean` / `check-ignore` / `check-attr` / `lfs` / `diff --textconv` / `archive export-ignore` |
+| `machine_porcelain_contract_test.rs` | P1-03 (plan-20260708) | 机器可读 porcelain 契约：`status --porcelain=v1/v2 -z` 使用 NUL 记录、默认 `diff` 不含 untracked 且 `--quiet`/`--exit-code` 退出码正确、`ls-files --error-unmatch` 退出 1、`grep` 命中/无命中/错误分别退出 0/1/2 |
 
 ## Authoring guidelines
 

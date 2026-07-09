@@ -411,9 +411,6 @@ pub(crate) enum DiffError {
     #[error("failed to load index: {0}")]
     IndexLoad(String),
 
-    #[error("failed to list working directory files: {0}")]
-    WorkdirList(String),
-
     #[error("failed to read file '{path}': {detail}")]
     FileRead { path: String, detail: String },
 
@@ -477,9 +474,6 @@ impl From<DiffError> for CliError {
             DiffError::IndexLoad(_) => CliError::fatal(message)
                 .with_stable_code(StableErrorCode::RepoCorrupt)
                 .with_hint("the index file may be corrupted"),
-            DiffError::WorkdirList(_) => {
-                CliError::fatal(message).with_stable_code(StableErrorCode::IoReadFailed)
-            }
             DiffError::FileRead { .. } => {
                 CliError::fatal(message).with_stable_code(StableErrorCode::IoReadFailed)
             }
@@ -1871,18 +1865,11 @@ fn index_mode_from_metadata(metadata: &std::fs::Metadata) -> u32 {
 }
 
 fn get_worktree_diff_files(index: &Index) -> Result<Vec<PathBuf>, DiffError> {
-    let mut seen = HashSet::new();
     let mut files = Vec::new();
-
-    for file in util::list_workdir_files().map_err(|e| DiffError::WorkdirList(e.to_string()))? {
-        if seen.insert(file.clone()) {
-            files.push(file);
-        }
-    }
 
     for file in index.tracked_files() {
         let absolute = util::workdir_to_absolute(&file);
-        if std::fs::symlink_metadata(&absolute).is_ok() && seen.insert(file.clone()) {
+        if std::fs::symlink_metadata(&absolute).is_ok() {
             files.push(file);
         }
     }

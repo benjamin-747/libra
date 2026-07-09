@@ -277,6 +277,8 @@ Detached HEAD：
 
 未跟踪条目折叠为 `? <path>`，被忽略条目折叠为 `! <path>`，匹配 Git 自身 v2 编码。实现位于 `src/command/status.rs::output_porcelain_v2`，并由 `build_porcelain_v2_data` 提供数据；后者在渲染前从索引和 HEAD tree 中取出 mode + hash 元数据。
 
+使用 `-z` 时，porcelain v1 和 v2 记录以 NUL 终止且不带尾随换行。启用 rename 检测的 porcelain 输出在 `-z` 下不使用人类可读的 `old -> new` 箭头形式；脚本应按 NUL 切分字段。
+
 多数消费者仍应优先使用 `--json`（或紧凑单行 JSON 的 `--machine`）：JSON 信封携带相同 staged/unstaged/untracked 分区，以及 upstream tracking 和 `stash_entries`，并且比 v2 的位置文本列更容易解析。只有在明确需要与已理解 v2 语法的工具兼容时，才使用 `--porcelain v2`。
 
 ### 显式 `--exit-code` 而不是隐式行为

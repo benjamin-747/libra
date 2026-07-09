@@ -17,7 +17,7 @@ libra diff [--algorithm <name>] [--output <file>]
 
 ## 说明
 
-`libra diff` 显示仓库不同状态之间的更改。默认情况下，它比较索引和工作树（未暂存更改）。使用 `--staged` 时，它比较 HEAD 和索引（已暂存更改）。使用 `--old` 和 `--new` 时，它比较两个任意提交。
+`libra diff` 显示仓库不同状态之间的更改。默认情况下，它比较索引和已跟踪工作树路径（未暂存更改）。未跟踪文件不属于默认 diff，因此不会影响 `--quiet`、`--exit-code`、`--name-status`、`--numstat` 或 `--shortstat`；请用 `libra status`、`libra ls-files --others` 或 `libra add` 检查或纳入未跟踪文件。使用 `--staged` 时，它比较 HEAD 和索引（已暂存更改）。使用 `--old` 和 `--new` 时，它比较两个任意提交。
 
 Diff 引擎支持多种算法（默认 histogram，myers 和 myersMinimal 作为替代）。输出可以通过 `--output` 写入文件，并提供若干摘要格式（`--name-only`、`--name-status`、`--numstat`、`--stat`、`--shortstat`、`--summary`）。可用 `-s`/`--no-patch` 配合 `--exit-code` 做仅状态检查；`-z`/`--null` 让 name/numstat 输出以 NUL 终止，便于安全脚本解析。
 
@@ -189,6 +189,8 @@ libra --json diff --staged
 - `--no-ext-diff` 本次运行禁用外部 diff 驱动，强制内建引擎；`--ext-diff` 允许已配置的 `diff.external` 外部驱动生成 patch（按 Git GIT_EXTERNAL_DIFF 协议，仅 patch 输出模式；`--stat`/name/numstat/`-s`/`--check` 绕过）
 - `--exit-code` 仍打印 diff，但存在差异时退出码为 `1`
 - `--quiet` 抑制 stdout，并用退出码 `1` 表示存在差异
+
+默认情况下，这些偏机器输出的 diff 模式只报告 tracked/index 与工作树之间的差异。未跟踪文件（包括未跟踪的 `.libraignore`）不会出现，也不会让 `--quiet` 或 `--exit-code` 失败。
 
 未合并冲突路径在默认工作区 diff 中以 `diff --cc <path>` 头显示。
 

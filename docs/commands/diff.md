@@ -17,7 +17,7 @@ libra diff [--algorithm <name>] [--output <file>]
 
 ## Description
 
-`libra diff` shows changes between different states of the repository. By default it compares the index against the working tree (unstaged changes). With `--staged`, it compares HEAD against the index (staged changes). With `--old` and `--new`, it compares two arbitrary commits.
+`libra diff` shows changes between different states of the repository. By default it compares the index against tracked working-tree paths (unstaged changes). Untracked files are not part of the default diff and therefore do not affect `--quiet`, `--exit-code`, `--name-status`, `--numstat`, or `--shortstat`; use `libra status`, `libra ls-files --others`, or `libra add` to inspect or promote untracked files. With `--staged`, it compares HEAD against the index (staged changes). With `--old` and `--new`, it compares two arbitrary commits.
 
 The diff engine supports multiple algorithms (histogram by default, with myers and myersMinimal as alternatives). Output can be directed to a file with `--output`, and several summary formats are available (`--name-only`, `--name-status`, `--numstat`, `--stat`, `--shortstat`, `--summary`). A status-only check is possible with `-s`/`--no-patch` and `--exit-code`, and `-z`/`--null` makes the name/numstat outputs NUL-terminated for safe scripting. `--word-diff[=<mode>]` re-renders the patch at word granularity (matching Git's structure; like all Libra diffs, the exact word grouping can differ from Git on ambiguous changes, and hunk headers keep Libra's unified-diff format).
 
@@ -190,6 +190,8 @@ Supported output modes:
 - `-z` / `--null` NUL-terminates `--name-only`/`--name-status`/`--numstat` records (status and path become separate NUL fields under `--name-status`)
 - `--check` scans added lines for trailing whitespace, space-before-tab, leftover conflict markers, and new blank lines at EOF; any hit exits `2`
 - `--quiet` suppresses stdout and uses exit `1` to signal that differences exist
+
+By default these machine-oriented diff modes report only tracked/index-vs-worktree changes. Untracked files, including an untracked `.libraignore`, do not appear and do not make `--quiet` or `--exit-code` fail.
 
 Unmerged conflict paths are shown with `diff --cc <path>` headers in the default working-tree diff.
 

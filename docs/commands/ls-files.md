@@ -57,7 +57,7 @@ without printing panic/backtrace or `Broken pipe` diagnostics.
 | `--exclude-standard` | With `--others`, honor standard Git/Libra ignore sources (`.gitignore`, `.git/info/exclude`, `core.excludesFile`, and `.libraignore`). |
 | `-x`, `--exclude <pattern>` | Skip untracked files matching `<pattern>` (gitignore syntax) from the `--others` listing. Repeatable; supplements `--exclude-standard`. With `-i` the pattern instead defines the ignored set. |
 | `-X`, `--exclude-from <file>` | Read additional exclude patterns from `<file>` (one per line; `#` comments and blank lines skipped) and apply them like `-x`. Repeatable. |
-| `--error-unmatch` | Exit with `LBR-CLI-003` if any explicit pathspec matches no files in the selected result set. |
+| `--error-unmatch` | Exit 1 with `LBR-CLI-003` if any explicit pathspec matches no files in the selected result set. |
 | `--eol` | Prefix each cached entry with `i/<eol> w/<eol> attr/<attr>` line-ending info: `<eol>` is `lf`/`crlf`/`mixed`/`none`/`-text` (binary) for the index blob (`i/`) and the worktree file (`w/`). Byte-compatible with `git ls-files --eol`; `attr/` is currently empty because line-ending attribute reporting is not implemented. |
 | `-z` | Emit NUL-delimited text records instead of newline-delimited output. Text mode only; rejects `--json` / `--machine`. |
 | `<pathspec>...` | Limit output to matching paths. Supports exact files, directory prefixes, default wildcards, and `:(top)` / `:(exclude)` / `:(icase)` / `:(literal)` / `:(glob)` magic. Pathspecs resolve from the current working directory unless `:(top)` is used. |

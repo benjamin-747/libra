@@ -7,7 +7,7 @@
 ## 对比 Git 与兼容性
 
 - 兼容级别：`partial`。
-- 已支持：默认 cached listing、`--cached` / `-c`、`--deleted` / `-d`、`--modified` / `-m`、`--stage` / `-s`、`--abbrev[=<n>]`（在 `-s`/`--stage` 输出里把对象名截断为 n 位 hex，bare 即 7；取值用 `=` 形式 `require_equals`，故 bare 不会吞掉 pathspec；定长截断而非最短唯一前缀）、`--others` / `-o`、`--others --exclude-standard`、`-i` / `--ignored`（只列出被忽略的集合：`-i -o` 列出被忽略的未跟踪文件——`-o` 的反集；`-i -c` 列出匹配 exclude 模式的已跟踪文件；二者按 per-file exclude 判定（custom `-x`/`-X` 优先于 standard Git/Libra ignore 来源）；要求配 `-o`/`-c` 且需 `--exclude-standard` 或显式 `-x`/`-X` pattern，否则退出码 128，与 git 一致）、`<pathspec>...`（经 `utils::pathspec::PathspecSet` 支持普通路径/目录前缀、默认通配符、`:(top)`、`:(exclude)`、`:(icase)`、`:(literal)`、`:(glob)`）、`--error-unmatch`、`-z`、`-t`（状态标签 H/R/C/?/M）、`-u` / `--unmerged`（仅冲突条目）、`--full-name`（接受为 no-op；Libra 始终输出仓库根相对路径）、`-x`/`--exclude <pattern>` 与 `-X`/`--exclude-from <file>`（显式 exclude pattern 源，gitignore 语法；过滤 `--others` 列表并计入 `-i` 的 ignored 集；经 `util::build_exclude_matcher` 编入内存 `Gitignore` 匹配器）、`--eol`（每个 cached 条目前缀行尾信息 `i/<eol> w/<eol> attr/<attr>`：`<eol>` 为 index blob（`i/`）与工作树文件（`w/`）的 `lf`/`crlf`/`mixed`/`none`/`-text`，经 `classify_eol` 判定；行格式 `i/%-5s w/%-5s attr/%-17s\t` 与 git 字节一致；line-ending attribute 报告尚未实现，故 `attr/` 恒为空；尊重 `-z`）、`--json` 和 `--machine`。
+- 已支持：默认 cached listing、`--cached` / `-c`、`--deleted` / `-d`、`--modified` / `-m`、`--stage` / `-s`、`--abbrev[=<n>]`（在 `-s`/`--stage` 输出里把对象名截断为 n 位 hex，bare 即 7；取值用 `=` 形式 `require_equals`，故 bare 不会吞掉 pathspec；定长截断而非最短唯一前缀）、`--others` / `-o`、`--others --exclude-standard`、`-i` / `--ignored`（只列出被忽略的集合：`-i -o` 列出被忽略的未跟踪文件——`-o` 的反集；`-i -c` 列出匹配 exclude 模式的已跟踪文件；二者按 per-file exclude 判定（custom `-x`/`-X` 优先于 standard Git/Libra ignore 来源）；要求配 `-o`/`-c` 且需 `--exclude-standard` 或显式 `-x`/`-X` pattern，否则退出码 128，与 git 一致）、`<pathspec>...`（经 `utils::pathspec::PathspecSet` 支持普通路径/目录前缀、默认通配符、`:(top)`、`:(exclude)`、`:(icase)`、`:(literal)`、`:(glob)`）、`--error-unmatch`（任一正向 pathspec 无匹配时退出 1 并保留 `LBR-CLI-003` 诊断）、`-z`、`-t`（状态标签 H/R/C/?/M）、`-u` / `--unmerged`（仅冲突条目）、`--full-name`（接受为 no-op；Libra 始终输出仓库根相对路径）、`-x`/`--exclude <pattern>` 与 `-X`/`--exclude-from <file>`（显式 exclude pattern 源，gitignore 语法；过滤 `--others` 列表并计入 `-i` 的 ignored 集；经 `util::build_exclude_matcher` 编入内存 `Gitignore` 匹配器）、`--eol`（每个 cached 条目前缀行尾信息 `i/<eol> w/<eol> attr/<attr>`：`<eol>` 为 index blob（`i/`）与工作树文件（`w/`）的 `lf`/`crlf`/`mixed`/`none`/`-text`，经 `classify_eol` 判定；行格式 `i/%-5s w/%-5s attr/%-17s\t` 与 git 字节一致；line-ending attribute 报告尚未实现，故 `attr/` 恒为空；尊重 `-z`）、`--json` 和 `--machine`。
 - 语义说明：pathspec 从调用者当前工作目录解析；`:(top)` 强制从仓库根解析；解析到仓库外的 pathspec 会被拒绝。
 - 暂未公开：resolve-undo、killed/debug output、sparse-checkout integration。
 
@@ -25,6 +25,7 @@
 - 2026-07-09（plan-20260708 P0-06）：直接 stdout 写入改走全局 `stdout_write_error` 映射，下游提前关闭管道时静默正常终止，不打印 panic/backtrace/`Broken pipe` 诊断。回归覆盖：`compat_broken_pipe_output`。
 - 2026-07-09（plan-20260708 P0-11）：`--deleted` / `--modified` 的工作树存在性判断改用 `symlink_metadata`，dangling tracked symlink 不再被误列为 deleted；symlink target 变化继续按 blob hash 差异列为 modified。回归覆盖：`compat_symlink_basic`。
 - 2026-07-09（plan-20260708 P1-01）：`ls-files` pathspec 过滤切到共享 `src/utils/pathspec/`，新增 `top`/`exclude`/`icase`/`literal`/`glob` magic 与子目录相对语义守卫。回归覆盖：`compat_pathspec_magic`。
+- 2026-07-09（plan-20260708 P1-03）：`--error-unmatch` 的 unmatched positive pathspec 从 Libra CLI usage 退出改为 Git-like 退出 1，同时保留 `LBR-CLI-003` 诊断与提示。回归覆盖：`compat_machine_porcelain_contract`。
 
 ## 当前状态
 
@@ -34,6 +35,7 @@
 - P0-01 后，`ls-files -t` 与 `-u` 都会遍历 unmerged stage 1/2/3：`-u` 输出 stage-style 行，`-t` 对每个冲突 stage 输出 `M <path>`，不再因默认 stage 0 视图隐藏冲突路径。回归测试：`compat_conflict_status_diff`。
 - P0-11 后，tracked symlink 由 `symlink_metadata` 判定存在，`ls-files --deleted` 不会把 dangling symlink 当作缺失；`--modified` 通过 symlink target bytes 对比 index blob。
 - P1-01 后，普通 pathspec、默认通配符和 `:(top)` / `:(exclude)` / `:(icase)` / `:(literal)` / `:(glob)` magic 均由共享 matcher 处理；`--error-unmatch` 只检查正向 pathspec，exclude-only pathspec 不触发未匹配错误。
+- P1-03 后，`--error-unmatch <missing>` 对未匹配的正向 pathspec 退出 1；stderr 继续携带 `LBR-CLI-003` 以保持 Libra 稳定错误码契约。
 - 回归测试：`tests/command_test.rs` 的 `command::ls_files_test::` 覆盖 CLI 行为；`tests/ai_libra_vcs_safety_test.rs` 覆盖 AI/MCP 只读安全；compat 文档测试覆盖 help、用户文档和命令索引同步。
 
 ## 还未实现的功能

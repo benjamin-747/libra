@@ -393,6 +393,7 @@ fn ensure_error_unmatch(pathspecs: &PathspecSet, entries: &[FileEntry]) -> CliRe
         return Err(
             CliError::fatal(format!("pathspec '{unmatched}' did not match any files"))
                 .with_stable_code(StableErrorCode::CliInvalidTarget)
+                .with_exit_code(1)
                 .with_hint("check the path and try again.")
                 .with_hint("use 'libra ls-files' to inspect visible paths."),
         );

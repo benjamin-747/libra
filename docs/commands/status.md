@@ -392,6 +392,10 @@ matching Git's own v2 encoding. The implementation lives in
 `build_porcelain_v2_data`, which pulls mode + hash metadata out of the
 index and HEAD tree before rendering.
 
+With `-z`, porcelain v1 and v2 records are NUL-terminated and contain no
+trailing newlines. Rename-capable porcelain output does not use the human
+`old -> new` arrow form under `-z`; scripts should split fields on NUL.
+
 Most consumers should still prefer `--json` (or `--machine` for compact
 single-line JSON): the JSON envelope carries the same staged/unstaged/
 untracked partitioning plus upstream tracking and `stash_entries`, and

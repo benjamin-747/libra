@@ -176,6 +176,7 @@
 | target | wave | one-line purpose | relevant src |
 |---|---|---|---|
 | `cloud_storage_backup_test` | 5 | D1/R2 backup + restore round-trip | `src/command/cloud.rs`, `src/utils/d1_client.rs`, `src/utils/client_storage.rs` |
+| `agent_cloud_tombstone_test` | 5 | A0-10 deferral guard: a local agent-capture erase does not propagate a tombstone to the D1 mirror (skips without `test-live-cloud` + `LIBRA_D1_*`) | `src/utils/d1_client.rs`, `src/internal/ai/history.rs` |
 | `publish_live_test` | 5 | Publish pipeline against live R2 | `src/publish/`, `src/command/publish.rs` |
 | `storage_r2_test` | 5 | Object store R2 path | `src/utils/client_storage.rs` |
 

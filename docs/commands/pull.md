@@ -18,7 +18,7 @@ With `--ff-only`, pull fetches the upstream but refuses to create a merge commit
 
 With `--no-ff`, pull always records a real merge commit even when the upstream could be fast-forwarded, mirroring `git pull --no-ff`. `--ff` explicitly allows the default fast-forward behaviour. `--ff`, `--no-ff`, and `--ff-only` are mutually exclusive and conflict with `--rebase`.
 
-With `--depth <n>`, the fetch phase is limited to a shallow history of `n` commits per tip before integration, mirroring `git pull --depth`. `--depth` is fetch-only and conflicts with `--rebase`.
+With `--depth <n>`, the fetch phase is limited to a shallow history of `n` commits per tip before integration, mirroring `git pull --depth`. `--depth` is fetch-only and conflicts with `--rebase`. The selected upstream must support shallow-boundary negotiation; a local Libra upstream fails closed with `LBR-REPO-002` before integration.
 
 When invoked with no arguments, the command reads the current branch tracking configuration (`branch.<name>.remote` and `branch.<name>.merge`). When `<repository>` is given alone, the current branch name is used as the remote branch. When both `<repository>` and `<refspec>` are given, the specified remote branch is fetched and merged.
 
@@ -43,7 +43,7 @@ With `--autostash`, pull stashes your tracked working-tree changes before integr
 | `--autostash` | Stash tracked changes before integrating and re-apply them afterwards (even on failure), so `pull` works on a dirty tree. Untracked/ignored files are left in place. | `libra pull --autostash` |
 | `--no-progress` | Suppress the fetch progress meter (the "Receiving objects" spinner), matching `git pull --no-progress`. | `libra pull --no-progress` |
 | `--notes` | Forward to the fetch: also import the file-dependency graph (`refs/notes/deps`, lore.md 3.2) from a **local Libra** upstream. Default OFF (Git parity); a network/plain-Git upstream warns and imports nothing (deferred, D17). See `libra fetch --notes`. | `libra pull --notes` |
-| `--depth <n>` | Limit the fetch phase to a shallow history of `n` commits per tip. Conflicts with `--rebase`. | `libra pull --depth 1` |
+| `--depth <n>` | Limit the fetch phase to a shallow history of `n` commits per tip. Conflicts with `--rebase`. Local Libra upstreams fail closed with `LBR-REPO-002` because they cannot advertise shallow boundaries yet. | `libra pull --depth 1` |
 | `-r`, `--rebase` | After fetching, rebase the current branch onto the upstream tip instead of merging. | `libra pull --rebase` |
 | `--no-rebase` | Merge instead of rebasing (the default), countermanding an earlier `--rebase`/`-r` (last one wins). Pull merges by default, so on its own this is a no-op. | `libra pull --no-rebase` |
 | `--json` | Emit structured JSON envelope to stdout (global flag). | `libra pull --json` |
@@ -205,7 +205,7 @@ Rebase output omits `merge` and includes `rebase`:
 | Three-way integration | Supported through merge engine | Supported | N/A |
 | Rebase on pull | `libra pull --rebase` | `git pull --rebase` | N/A |
 | Force merge commit | `libra pull --no-ff` | `git pull --no-ff` | N/A |
-| Shallow pull | `libra pull --depth 1` | `git pull --depth 1` | N/A |
+| Shallow pull | `libra pull --depth 1` | `git pull --depth 1` | N/A; requires a Git shallow-capable upstream, local Libra upstreams fail closed |
 | Squash | `libra pull --squash` | `git pull --squash` | N/A |
 | No-commit | `libra pull --no-commit` (finalize with `libra merge --continue`) | `git pull --no-commit` | N/A |
 | Force-commit override | `libra pull --commit` (last-one-wins with `--no-commit`) | `git pull --commit` | N/A |
